@@ -9,12 +9,14 @@
  *   node tools/inspect-osm.mjs --out report.txt      also write it to a file
  *   node tools/inspect-osm.mjs --find "galgotia"     list every feature with a tag value matching the pattern
  *   node tools/inspect-osm.mjs --file other.json     audit a different extract
+ *   node tools/inspect-osm.mjs --validate            list every element with malformed or far-away coordinates
  *
  * Data © OpenStreetMap contributors, ODbL 1.0.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatValidation, validateCoordinates } from "./geo/validate.mjs";
 
 // ---------------------------------------------------------------- geometry
 
@@ -637,7 +639,11 @@ export function metrics(raw) {
   add("INVALID ways with fewer than 2 points", d.ways.filter((w) => w.xy.length < 2).length);
   add("INVALID buildings not closed", d.buildings.filter((b) => !b.closed).length);
   add("INVALID closed buildings under 1 m2", d.buildings.filter((b) => b.closed && b.area < 1).length);
-  add("INVALID coordinates outside 28-29 N, 77-78 E", d.ways.filter((w) => w.pts.some((v, i) => (i % 2 ? v < 77 || v > 78 : v < 28 || v > 29))).length + d.nodes.filter((n) => !(n.lat > 28 && n.lat < 29 && n.lon > 77 && n.lon < 78)).length);
+  const v = validateCoordinates(raw);
+  add("INVALID malformed coordinates", v.malformed.length);
+  // Not a fault: long ways keep their whole geometry. Listed by --validate.
+  add("elements with a point outside 28-29 N, 77-78 E (legitimate if long)", v.legacyWindow.length);
+  add("ways reaching far beyond the bbox (clipped later)", v.farReaching.length);
   return m;
 }
 
@@ -659,7 +665,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error(`Cannot read ${file}: ${err.message}\nRun "node tools/fetch-osm.mjs" first.`);
     process.exit(1);
   }
-  if (arg("--find")) {
+  if (process.argv.includes("--validate")) {
+    console.log(formatValidation(validateCoordinates(raw)));
+  } else if (arg("--find")) {
     const hits = findByTag(prepare(raw), new RegExp(arg("--find"), "i"));
     console.log(`${hits.length} features match /${arg("--find")}/i`);
     for (const h of hits.slice(0, 200)) console.log(`${describe(h.f)} [${h.key}=${h.value}]`);

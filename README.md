@@ -75,6 +75,7 @@ The world shown today is still a fictional test district. Work has started on bu
 
 - `node tools/fetch-osm.mjs` downloads the baseline OpenStreetMap extract to `data/osm/`; `--profile v2` downloads the expanded one to a separate file.
 - `node tools/compare-osm.mjs` compares the two extracts.
+- `node tools/build-layers.mjs` converts an extract into game-ready layers in metres; `node tools/render-coverage.mjs` draws them as a 2D coverage map. See [docs/GEODATA_PIPELINE.md](docs/GEODATA_PIPELINE.md).
 - `node tools/inspect-osm.mjs` audits the extract (coverage, gaps, building evidence). `npm run test:tools` tests it.
 - [docs/GEODATA_SOURCES.md](docs/GEODATA_SOURCES.md): sources, licences, coverage and confidence classes.
 - [docs/REGION_PACKAGES.md](docs/REGION_PACKAGES.md): design of downloadable region packages (not implemented).
