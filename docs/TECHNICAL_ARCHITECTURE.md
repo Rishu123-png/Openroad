@@ -9,8 +9,11 @@ Scope: OPENROAD 0.1, the browser client only. This document grows with each mile
 | `src/main.ts` | Composition root. Creates the engine, input, UI and game, connects them, tears them down | Everything |
 | `game/engine/createEngine.ts` | Creates the WebGL engine and turns a failure into a readable error | Babylon.js, DOM canvas |
 | `game/engine/Game.ts` | Owns the scene and its lifecycle: build, start, stop, dispose | Babylon.js, `input/`, other `game/` modules |
-| `game/scene/` | Builds the static test environment | Babylon.js |
-| `game/lighting/` | Lights, sky colour, fog | Babylon.js |
+| `game/world/` | Generates the procedural test district | Babylon.js, `game/geometry/`, `game/materials/`, `utils/` |
+| `game/geometry/` | Builds meshes from boxes, cylinders and other shapes; batches them per material and ground tile | Babylon.js |
+| `game/materials/` | Shared physically based materials; textures generated as raw pixels | Babylon.js, `utils/` |
+| `game/lighting/` | Sky dome, sky ambient light, sun, static shadow map, haze, tone mapping | Babylon.js, `game/materials/` |
+| `utils/` | Seeded random numbers and noise | Nothing |
 | `game/camera/` | Camera rig and its view presets | Babylon.js |
 | `input/` | Turns keyboard events into game actions | Nothing |
 | `ui/` | DOM overlay: status line, help text, error screen | DOM only |
@@ -29,7 +32,7 @@ boot()                         main.ts
   Overlay                      "Loading OPENROAD…"
   createEngine(canvas)         throws GraphicsUnavailableError if WebGL is missing
   KeyboardInput(window)
-  Game({ engine, input, ... }) builds lighting, playground, camera
+  Game({ engine, input, ... }) builds lighting, district, camera
   game.start()                 engine.runRenderLoop(renderFrame)
 
 shutdown()                     on pagehide, on Vite hot reload, or after a startup error
@@ -54,7 +57,9 @@ Each object disposes only what it created. `Game` does not dispose the engine or
 ## World conventions
 
 - Units are metres.
-- Y is up. The test road runs along the Z axis and is centred on the origin.
+- Y is up. The main road runs along the Z axis, the cross road along X, and they meet at the origin.
+- Traffic keeps left.
+- See [World generation and rendering](WORLD_GENERATION.md) for the district layout and rendering techniques.
 - Babylon.js default left-handed coordinates.
 
 ## Decisions
@@ -62,10 +67,10 @@ Each object disposes only what it created. `Game` does not dispose the engine or
 | Decision | Reason |
 | --- | --- |
 | npm workspaces with `apps/web` | Matches the target layout in Part 10 of the master plan, so the server and shared packages can be added without moving files |
-| Deep imports such as `@babylonjs/core/Meshes/mesh` | Lets the bundler drop unused parts of Babylon.js. The production bundle is 1.1 MB (264 kB gzipped) |
-| `StandardMaterial`, flat colours, no textures | No assets to license or load yet. PBR materials come with real assets |
-| Instances for lane dashes and posts | One draw call per repeated object type |
-| Orbit camera with three presets | An inspection camera for the empty scene. The chase camera replaces it when the vehicle exists |
+| Deep imports such as `@babylonjs/core/Meshes/mesh` | Lets the bundler drop unused parts of Babylon.js. The production entry chunk is 1.19 MB (297 kB gzipped) |
+| Physically based materials with textures generated in code | Realistic response to light with no assets to license or download |
+| Batching per material and ground tile; instances for repeated objects | About 200 draw calls for the whole district |
+| Orbit camera with four presets and gliding transitions | An inspection camera until the vehicle exists and the chase camera replaces it |
 | No UI framework | The overlay is three elements. Revisit when menus are built |
 | No physics engine | Rapier.js is planned for the vehicle milestone and is not installed |
 
@@ -74,7 +79,8 @@ Each object disposes only what it created. `Game` does not dispose the engine or
 | Layer | How it is checked | Automated in the repository |
 | --- | --- | --- |
 | Types | `npm run typecheck` | Yes |
-| Scene, camera, lifecycle, disposal | `tests/Game.test.ts` on Babylon's `NullEngine` | Yes |
+| District contents, camera, lifecycle, disposal | `tests/Game.test.ts` on Babylon's `NullEngine` | Yes |
+| Mesh winding, texture coordinates, textures, noise | `tests/geometry.test.ts` | Yes |
 | Keyboard input | `tests/KeyboardInput.test.ts` | Yes |
 | Production bundle | `npm run build` | Yes |
 | Real rendering, overlay, `main.ts`, error screen | Manual check in a browser (see Session 01) | No |
@@ -90,7 +96,10 @@ Each object disposes only what it created. `Game` does not dispose the engine or
 | `KeyboardInput` calls `preventDefault` on every bound key | Would block typing W, A, S, D or Space in a text field | Before chat or any text input exists |
 | Driving actions are bound but unused | None today | Consumed by the vehicle controller in Session 02 |
 | Only the keyboard input source exists | No gamepad or touch | Android milestone |
-| No shadows, no textures, flat sky colour | Plain look | Graphics milestone |
+| Frame rate on a real GPU is unmeasured | The district may be too heavy for integrated graphics | Measure on the RTX 3050, then add graphics quality settings |
+| No graphics quality settings | No fallback for slow devices | With the first hardware measurements |
+| Sky ambient light is skipped on the headless test engine | Tests do not cover it | When a browser test exists |
+| A development-only `window.openroad` handle exposes the game | None in production builds | Keep |
 | Context-loss handling is unit-tested with a simulated event only | Real GPU loss is unverified | Test with `WEBGL_lose_context` when Playwright is added |
 | Dev server allows `.e2b.app` hosts | Development only; needed for the agent's hosted preview | Remove if agent previews are no longer used |
 

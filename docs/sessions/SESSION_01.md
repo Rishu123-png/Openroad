@@ -6,6 +6,8 @@
 
 **Status:** implemented and verified by the AI coding agent, including in a real headless browser. Two things remain for the owner: a check on real hardware, and approval to merge.
 
+**Note:** this is a record of the first session. The flat test scene it describes was later replaced by the procedural district, and the camera views were renamed. See [World generation and rendering](../WORLD_GENERATION.md).
+
 **Scope:** Rapier.js is not installed. Physics starts with the vehicle milestone.
 
 ## What was built

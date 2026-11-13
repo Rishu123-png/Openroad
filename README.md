@@ -2,7 +2,9 @@
 
 A browser-based, multiplayer, open-world driving and social game. The first world is Greater Noida, India.
 
-**Current milestone:** OPENROAD 0.1 — Foundation and 3D scene. The application renders a test environment (ground, a straight two-lane road, daylight, an orbit camera). There is no vehicle, physics, multiplayer or backend yet.
+**Current milestone:** OPENROAD 0.1 — Foundation and 3D scene. The application renders a procedural test district: a divided six-lane road crossing a four-lane road, with footpaths, planting, buildings, street furniture, daylight and shadows. There is no vehicle, physics, multiplayer or backend yet.
+
+![Driving view](docs/screenshots/after-driving-view.jpg)
 
 ## Requirements
 
@@ -35,7 +37,7 @@ Run all commands from the repository root.
 | --- | --- |
 | Left mouse drag | Orbit the camera |
 | Mouse wheel | Zoom |
-| C | Change camera view |
+| C | Glide to the next camera view (driving, footpath, junction, aerial) |
 | R | Reset camera view |
 
 W/A/S/D, the arrow keys and Space are already bound to driving actions, but nothing uses them until the vehicle exists.
@@ -48,9 +50,12 @@ apps/web/               the browser game (Vite + TypeScript + Babylon.js)
   src/
     main.ts             composition root: creates and connects everything
     game/engine/        engine creation and the Game lifecycle
-    game/scene/         the test environment
+    game/world/         the procedural district: roads, buildings, planting, furniture
+    game/geometry/      mesh building and batching
+    game/materials/     shared materials and textures generated in code
     game/camera/        camera rig
-    game/lighting/      lights, sky colour, fog
+    game/lighting/      sky, sun, shadows, haze, tone mapping
+    utils/              seeded random numbers and noise
     input/              device-independent input actions
     ui/                 DOM overlay and styles
   tests/
@@ -60,5 +65,6 @@ docs/                   project documents
 ## Documents
 
 - [Technical architecture](docs/TECHNICAL_ARCHITECTURE.md)
+- [World generation and rendering](docs/WORLD_GENERATION.md): how the district is built, performance and visual limitations
 - [Project management decisions](docs/PROJECT_MANAGEMENT.md)
 - [Session 01 — Foundation and 3D scene](docs/sessions/SESSION_01.md)

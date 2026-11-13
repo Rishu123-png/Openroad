@@ -4,8 +4,8 @@ import { Scene } from "@babylonjs/core/scene";
 import { InputAction } from "../../input/InputActions";
 import type { KeyboardInput } from "../../input/KeyboardInput";
 import { OrbitCameraRig } from "../camera/OrbitCameraRig";
-import { createDaylight } from "../lighting/createDaylight";
-import { createPlayground, type Playground } from "../scene/createPlayground";
+import { createDaylight, type Daylight } from "../lighting/createDaylight";
+import { createWorld, type World } from "../world/createWorld";
 
 export interface GameOptions {
   engine: AbstractEngine;
@@ -23,6 +23,12 @@ export interface GameOptions {
 export interface GameStats {
   fps: number;
   cameraView: string;
+  /** Draw calls in the last frame. */
+  drawCalls: number;
+  /** Meshes that passed frustum culling in the last frame. */
+  activeMeshes: number;
+  /** Triangles submitted in the last frame. */
+  triangles: number;
 }
 
 const STATS_INTERVAL_MS = 250;
@@ -35,7 +41,8 @@ const STATS_INTERVAL_MS = 250;
  */
 export class Game {
   readonly scene: Scene;
-  readonly playground: Playground;
+  readonly world: World;
+  readonly daylight: Daylight;
   readonly cameraRig: OrbitCameraRig;
 
   private readonly engine: AbstractEngine;
@@ -46,6 +53,7 @@ export class Game {
   private running = false;
   private disposed = false;
   private lastStatsAt = 0;
+  private lastDrawCalls = 0;
 
   constructor(options: GameOptions) {
     this.options = options;
@@ -53,8 +61,11 @@ export class Game {
 
     this.scene = new Scene(this.engine);
     try {
-      createDaylight(this.scene);
-      this.playground = createPlayground(this.scene);
+      // Nothing is clickable yet, so skip the per-move picking pass.
+      this.scene.skipPointerMovePicking = true;
+      this.daylight = createDaylight(this.scene);
+      this.world = createWorld(this.scene);
+      this.daylight.setStaticShadowCasters(this.world.shadowCasters);
       this.cameraRig = new OrbitCameraRig(this.scene);
       if (options.canvas) this.cameraRig.attach(options.canvas);
     } catch (error) {
@@ -107,7 +118,10 @@ export class Game {
 
   /** Render a single frame. Called by the render loop; public for tests. */
   renderFrame = (): void => {
+    this.cameraRig.update(this.engine.getDeltaTime() / 1000);
+    const drawCallsBefore = this.engine._drawCalls.current;
     this.scene.render();
+    this.lastDrawCalls = this.engine._drawCalls.current - drawCallsBefore;
 
     const now = performance.now();
     if (this.options.onStats && now - this.lastStatsAt >= STATS_INTERVAL_MS) {
@@ -115,6 +129,9 @@ export class Game {
       this.options.onStats({
         fps: this.engine.getFps(),
         cameraView: this.cameraRig.presetName,
+        drawCalls: this.lastDrawCalls,
+        activeMeshes: this.scene.getActiveMeshes().length,
+        triangles: Math.round(this.scene.getActiveIndices() / 3),
       });
     }
   };

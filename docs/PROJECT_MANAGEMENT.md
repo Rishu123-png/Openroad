@@ -122,5 +122,6 @@ From section 16.3. A feature is done when it has:
 | Session | Stage | Output | Status |
 | --- | --- | --- | --- |
 | [01](sessions/SESSION_01.md) | 1 — Project foundation | Browser-playable 3D application | Verified in headless Chromium; awaiting check on real hardware and approval to merge |
+| Visual upgrade | Environment polish | Procedural district; see [World generation](WORLD_GENERATION.md) | Verified in headless Chromium; frame rate on real hardware unmeasured |
 | 02 | 2 — Vehicle prototype | One drivable car | Planned |
 | 03 | 3 — AI traffic | One AI vehicle following a route | Planned |

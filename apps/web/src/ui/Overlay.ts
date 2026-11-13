@@ -4,6 +4,7 @@
  */
 export class Overlay {
   private readonly status: HTMLDivElement;
+  private readonly detail: HTMLDivElement;
   private readonly help: HTMLDivElement;
   private readonly error: HTMLDivElement;
   private readonly errorDetail: HTMLParagraphElement;
@@ -14,6 +15,9 @@ export class Overlay {
     this.status = doc.createElement("div");
     this.status.className = "or-status";
     this.status.textContent = "Loading OPENROAD…";
+
+    this.detail = doc.createElement("div");
+    this.detail.className = "or-detail";
 
     this.help = doc.createElement("div");
     this.help.className = "or-help";
@@ -27,12 +31,17 @@ export class Overlay {
     this.errorDetail = doc.createElement("p");
     this.error.append(title, this.errorDetail);
 
-    root.append(this.status, this.help, this.error);
+    root.append(this.status, this.detail, this.help, this.error);
   }
 
   setStatus(text: string): void {
     // Avoid touching the DOM when nothing changed.
     if (this.status.textContent !== text) this.status.textContent = text;
+  }
+
+  /** Smaller line under the status, for rendering statistics. */
+  setDetail(text: string): void {
+    if (this.detail.textContent !== text) this.detail.textContent = text;
   }
 
   setHelp(text: string): void {
@@ -50,6 +59,7 @@ export class Overlay {
 
   dispose(): void {
     this.status.remove();
+    this.detail.remove();
     this.help.remove();
     this.error.remove();
   }

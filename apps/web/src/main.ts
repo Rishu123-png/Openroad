@@ -33,8 +33,11 @@ function boot(): () => void {
       input,
       canvas,
       resizeTarget: window,
-      onStats: ({ fps, cameraView }) => {
-        overlay.setStatus(`OPENROAD ${__APP_VERSION__} · ${fps.toFixed(0)} FPS · ${cameraView}`);
+      onStats: (stats) => {
+        overlay.setStatus(`OPENROAD ${__APP_VERSION__} · ${stats.fps.toFixed(0)} FPS · ${stats.cameraView}`);
+        overlay.setDetail(
+          `${stats.drawCalls} draw calls · ${stats.activeMeshes} meshes · ${(stats.triangles / 1000).toFixed(0)}k triangles`,
+        );
       },
       onContextChange: (lost) => {
         if (lost) overlay.showError("The graphics context was lost. Waiting for the browser to restore it…");
@@ -42,6 +45,8 @@ function boot(): () => void {
       },
     });
     disposers.push(() => game.dispose());
+    // Development aid: inspect the running game from the browser console.
+    if (import.meta.env.DEV) (window as unknown as { openroad?: Game }).openroad = game;
 
     overlay.setHelp("Drag: orbit · Wheel: zoom · C: change view · R: reset view");
     game.start();

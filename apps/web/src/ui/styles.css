@@ -17,6 +17,7 @@ body {
 }
 
 .or-status,
+.or-detail,
 .or-help {
   position: fixed;
   left: 12px;
@@ -28,6 +29,16 @@ body {
 
 .or-status {
   top: 12px;
+}
+
+.or-detail {
+  top: 48px;
+  font-size: 11px;
+  color: #b6c2cf;
+}
+
+.or-detail:empty {
+  display: none;
 }
 
 .or-help {
