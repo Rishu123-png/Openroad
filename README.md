@@ -74,7 +74,7 @@ docs/                   project documents
 The world shown today is still a fictional test district. Work has started on building Greater Noida from real map data:
 
 - `node tools/fetch-osm.mjs` downloads the OpenStreetMap extract to `data/osm/`.
-- `node tools/inspect-osm.mjs` reports what the extract covers.
+- `node tools/inspect-osm.mjs` audits the extract (coverage, gaps, building evidence). `npm run test:tools` tests it.
 - [docs/GEODATA_SOURCES.md](docs/GEODATA_SOURCES.md): sources, licences, coverage and confidence classes.
 - [docs/REGION_PACKAGES.md](docs/REGION_PACKAGES.md): design of downloadable region packages (not implemented).
 

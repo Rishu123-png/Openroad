@@ -62,6 +62,26 @@ Not yet known, and not to be assumed:
   height or level tags.
 - Whether service roads, medians and footpaths are mapped as separate ways.
 
+## Audit tool
+
+`node tools/inspect-osm.mjs --out data/osm/audit-report.txt` reads the extract
+and reports: integrity problems and duplicates; road classes with name, lane
+and one-way coverage; roundabouts; roads around Pari Chowk and each sector;
+per-sector building, park, gate and land-use counts; searches of every tag for
+Knowledge Park and Jagat Farm with nearby education and commerce features;
+building sizes, shapes and an evidence-based classification; barriers, gates
+and named residential areas; and a list of gaps. `--find <pattern>` lists every
+feature with a matching tag value. `npm run test:tools` tests it on a synthetic
+fixture.
+
+The audit has **not yet been run on the real extract by the agent**: the file
+exists only on the project owner's machine and has not been shared. The
+tables above therefore still rest on individual lookups.
+
+Classification rule: a building is called institutional, commercial or an
+apartment block only when its own tags or an enclosing tagged area say so.
+Guesses from footprint size are printed in rows marked UNCONFIRMED.
+
 ## Confidence classes
 
 Every generated feature will carry one of these, and the classes will stay
