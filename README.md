@@ -68,3 +68,14 @@ docs/                   project documents
 - [World generation and rendering](docs/WORLD_GENERATION.md): how the district is built, performance and visual limitations
 - [Project management decisions](docs/PROJECT_MANAGEMENT.md)
 - [Session 01 — Foundation and 3D scene](docs/sessions/SESSION_01.md)
+
+## Real-world map data (in progress)
+
+The world shown today is still a fictional test district. Work has started on building Greater Noida from real map data:
+
+- `node tools/fetch-osm.mjs` downloads the OpenStreetMap extract to `data/osm/`.
+- `node tools/inspect-osm.mjs` reports what the extract covers.
+- [docs/GEODATA_SOURCES.md](docs/GEODATA_SOURCES.md): sources, licences, coverage and confidence classes.
+- [docs/REGION_PACKAGES.md](docs/REGION_PACKAGES.md): design of downloadable region packages (not implemented).
+
+Map data © OpenStreetMap contributors, available under the Open Database License.

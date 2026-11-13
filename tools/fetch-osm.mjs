@@ -15,7 +15,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** south, west, north, east. Pari Chowk roundabout is at about 28.4652, 77.5113. */
-export const BBOX = [28.445, 77.485, 28.495, 77.54];
+export const BBOX = [28.445, 77.485, 28.5, 77.54];
 
 const ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
