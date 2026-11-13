@@ -99,3 +99,113 @@ test("audit handles a dataset of the real size quickly", () => {
   audit(data);
   assert.ok(Date.now() - t < 20000);
 });
+
+// ---- v2: relations, trimming and comparison --------------------------------
+import { mkdtemp, readFile as read, writeFile as write } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { PROFILES, trim } from "./fetch-osm.mjs";
+import { compare } from "./compare-osm.mjs";
+import { assembleRings, metrics } from "./inspect-osm.mjs";
+
+const geomOf = (pts) => { const g = []; for (let i = 0; i < pts.length; i += 2) g.push({ lat: pts[i], lon: pts[i + 1] }); return g; };
+/** Raw Overpass-style response: one building split into two member ways, with a courtyard. */
+const rawV2 = () => {
+  const f = fixture();
+  const elements = [
+    ...f.ways.map((w) => ({ type: "way", id: w.id, tags: w.tags, geometry: geomOf(w.pts) })),
+    ...f.nodes.map((n) => ({ type: "node", id: n.id, lat: n.lat, lon: n.lon, tags: n.tags })),
+    { type: "way", id: 50, tags: { "building:part": "yes", height: "40" }, geometry: geomOf(rect(400, 700, 10, 10)) },
+    { type: "way", id: 51, geometry: geomOf(line([3000, 0], [3100, 0], [3100, 100])) },
+    { type: "node", id: 200, lat: ORIGIN.lat, lon: ORIGIN.lon + 0.001, tags: { highway: "street_lamp" } },
+    { type: "node", id: 201, lat: ORIGIN.lat, lon: ORIGIN.lon + 0.002, tags: { barrier: "bollard" } },
+    { type: "node", id: 202, lat: ORIGIN.lat, lon: ORIGIN.lon + 0.003, tags: { entrance: "main" } },
+    { type: "node", id: 203, lat: ORIGIN.lat + 0.0001, lon: ORIGIN.lon + 0.0323, tags: { shop: "clothes", name: "Shop near Jagat tag" } },
+    { type: "relation", id: 900, tags: { type: "multipolygon", building: "university", name: "Test Block" }, members: [
+      { type: "way", ref: 51, role: "outer", geometry: geomOf(line([3000, 0], [3100, 0], [3100, 100])) },
+      { type: "way", ref: 52, role: "outer", geometry: geomOf(line([3100, 100], [3000, 100], [3000, 0])) },
+      { type: "way", ref: 53, role: "inner", geometry: geomOf(rect(3040, 40, 20, 20)) },
+    ] },
+    { type: "relation", id: 901, tags: { type: "boundary", boundary: "administrative", admin_level: "8", name: "Test Ward" }, members: [
+      { type: "way", ref: 60, role: "outer", geometry: [{ lat: ORIGIN.lat, lon: ORIGIN.lon }, null, { lat: ORIGIN.lat + 0.01, lon: ORIGIN.lon }] },
+    ] },
+    // The same way listed twice, as Overpass does when it matches two statements.
+    { type: "way", id: 2, tags: { building: "yes" }, geometry: geomOf(rect(200, 600, 10, 12)) },
+  ];
+  return { osm3s: { timestamp_osm_base: "fixture-2" }, elements };
+};
+
+test("v2 query keeps everything v1 asked for and adds the new classes", () => {
+  const q1 = PROFILES.v1.query, q2 = PROFILES.v2.query;
+  for (const line of q1.split("\n").filter((l) => /^\s+way\[/.test(l))) assert.ok(q2.includes(line.trim()), `v2 lost ${line.trim()}`);
+  for (const needle of ['way["building:part"]', "relation[type=multipolygon]", "node[entrance]", "node[barrier];", "node[highway];", "way(r.rels)", "node[office]"]) assert.ok(q2.includes(needle), needle);
+  assert.equal(q1.match(/bbox:([^\]]+)/)[1], q2.match(/bbox:([^\]]+)/)[1]);
+  assert.notEqual(PROFILES.v1.file, PROFILES.v2.file);
+});
+
+test("trim keeps ids, tags, roles and relation members, and removes repeated elements", () => {
+  const d = trim(rawV2(), { profile: "v2", query: "q", endpoint: "e", extractedAt: "2026-01-01T00:00:00Z" });
+  assert.equal(d.profile, "v2");
+  assert.equal(d.extractedAt, "2026-01-01T00:00:00Z");
+  assert.match(d.licence, /ODbL 1\.0, © OpenStreetMap contributors/);
+  assert.equal(d.ways.filter((w) => w.id === 2).length, 1);
+  assert.deepEqual(d.ways.find((w) => w.id === 51).tags, {});
+  const r = d.relations.find((x) => x.id === 900);
+  assert.deepEqual(r.members.map((m) => [m.ref, m.role]), [[51, "outer"], [52, "outer"], [53, "inner"]]);
+  assert.equal(r.clipped, false);
+  assert.equal(d.relations.find((x) => x.id === 901).clipped, true);
+  assert.equal(trim(rawV2(), { profile: "v1" }).relations, undefined);
+});
+
+test("rings are assembled from several member ways", () => {
+  const d = trim(rawV2(), { profile: "v2" });
+  const r = d.relations.find((x) => x.id === 900);
+  const outer = assembleRings(r.members.filter((m) => m.role === "outer"));
+  assert.equal(outer.rings.length, 1);
+  assert.equal(outer.open, 0);
+  assert.ok(Math.abs(areaOf(outer.rings[0]) - 10000) < 20);
+  assert.equal(assembleRings([r.members[0]]).open, 1);
+});
+
+test("audit and metrics report relations, parts and street furniture", () => {
+  const d = trim(rawV2(), { profile: "v2" });
+  const text = audit(d);
+  assert.match(text, /== 9\. RELATIONS/);
+  assert.match(text, /Outline assembly: closed 1; cut at the bbox 1; not closing although complete 0/);
+  assert.match(text, /With inner rings[^:]*: 1/);
+  assert.match(text, /Building parts 1: with height 1/);
+  assert.match(text, /street lamps 1/);
+  const m = new Map(metrics(d));
+  assert.equal(m.get("relations"), 2);
+  assert.equal(m.get("building relations with a usable outline"), 1);
+  assert.equal(m.get("bollards"), 1);
+  assert.equal(m.get("INVALID duplicate way ids"), 0);
+  assert.equal(new Map(metrics(fixture())).get("relations"), "not requested");
+});
+
+test("comparison shows gains, flags losses and keeps attribution", () => {
+  const a = fixture();
+  const b = trim(rawV2(), { profile: "v2" });
+  const text = compare(a, b, "baseline", "v2");
+  assert.match(text, /© OpenStreetMap contributors, ODbL 1\.0/);
+  assert.match(text, /street lamps\s+\|\s+0 \|\s+1 \| \+1/);
+  assert.match(text, /ways: in both 15; only in v2 2; only in baseline 0/);
+  assert.match(text, /No metric got worse/);
+  b.ways = b.ways.filter((w) => w.id !== 10);
+  assert.match(compare(a, b, "baseline", "v2"), /Worse or lower in v2: road ways: 3 -> 2/);
+});
+
+test("fetch script refuses to overwrite an existing extract", async () => {
+  const run = promisify(execFile);
+  const dir = await mkdtemp(join(tmpdir(), "openroad-"));
+  const rawFile = join(dir, "raw.json"), outFile = join(dir, "out.json");
+  await write(rawFile, JSON.stringify(rawV2()));
+  const script = new URL("./fetch-osm.mjs", import.meta.url).pathname;
+  await run("node", [script, "--profile", "v2", "--from", rawFile, "--out", outFile]);
+  const first = await read(outFile, "utf8");
+  assert.equal(JSON.parse(first).relations.length, 2);
+  await assert.rejects(run("node", [script, "--profile", "v2", "--from", rawFile, "--out", outFile]), /already exists and was left untouched/);
+  assert.equal(await read(outFile, "utf8"), first);
+});

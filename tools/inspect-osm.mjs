@@ -75,6 +75,37 @@ export const where = ([x, y]) => {
 };
 const geo = ([x, y]) => `${(ORIGIN.lat + y / M_LAT).toFixed(5)}, ${(ORIGIN.lon + x / M_LON).toFixed(5)}`;
 
+/**
+ * Joins member ways end to end into closed rings.
+ * Returns the closed rings (in metres) and how many chains could not be closed.
+ */
+export function assembleRings(members) {
+  const chains = members.filter((m) => m.pts && m.pts.length >= 4).map((m) => toXY(m.pts));
+  const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.05;
+  const rings = [];
+  let open = 0;
+  while (chains.length) {
+    let cur = chains.pop();
+    for (let grew = true; grew && !same(cur[0], cur.at(-1)); ) {
+      grew = false;
+      for (let i = 0; i < chains.length; i++) {
+        const c = chains[i];
+        if (same(cur.at(-1), c[0])) cur = cur.concat(c.slice(1));
+        else if (same(cur.at(-1), c.at(-1))) cur = cur.concat(c.slice(0, -1).reverse());
+        else if (same(cur[0], c.at(-1))) cur = c.concat(cur.slice(1));
+        else if (same(cur[0], c[0])) cur = c.slice().reverse().concat(cur.slice(1));
+        else continue;
+        chains.splice(i, 1);
+        grew = true;
+        break;
+      }
+    }
+    if (cur.length >= 4 && same(cur[0], cur.at(-1))) rings.push(cur);
+    else open++;
+  }
+  return { rings, open };
+}
+
 // ---------------------------------------------------------------- helpers
 
 const tally = (items, fn) => {
@@ -124,7 +155,14 @@ export function prepare(data) {
     return { ...w, xy, closed, c: centreOf(xy), len: lengthOf(xy), area: closed ? areaOf(xy) : 0 };
   });
   const nodes = data.nodes.map((n) => ({ ...n, c: toXY([n.lat, n.lon])[0] }));
-  return { ...data, ways, nodes };
+  const relations = (data.relations ?? []).map((r) => {
+    const outer = assembleRings(r.members.filter((m) => m.type === "way" && m.role !== "inner"));
+    const inner = assembleRings(r.members.filter((m) => m.type === "way" && m.role === "inner"));
+    const area = outer.rings.reduce((a, ring) => a + areaOf(ring), 0) - inner.rings.reduce((a, ring) => a + areaOf(ring), 0);
+    const all = outer.rings.flat();
+    return { ...r, outer, inner, area, c: all.length ? centreOf(all) : [NaN, NaN] };
+  });
+  return { ...data, ways, nodes, relations, hasRelations: Array.isArray(data.relations) };
 }
 
 /** Every feature with any tag value matching `re`. */
@@ -164,7 +202,9 @@ function sectionDataset(d, out) {
   out.push(`OSM base ${d.osmBase}; bbox S ${S} W ${W} N ${N} E ${E} = ${km((E - W) * M_LON)} km east-west x ${km((N - S) * M_LAT)} km north-south`);
   out.push(`Ways ${d.ways.length}: roads ${d.roads.length}, buildings ${d.buildings.length}, landuse ${d.landuse.length}, leisure ${d.ways.filter((w) => w.tags.leisure).length}, railway ${d.ways.filter((w) => w.tags.railway).length}, barrier ${d.ways.filter((w) => w.tags.barrier).length}, natural ${d.ways.filter((w) => w.tags.natural).length}, amenity areas ${d.ways.filter((w) => w.tags.amenity).length}`);
   out.push(`Tagged nodes ${d.nodes.length}`);
-  out.push("Relations are not in the extract, so multipolygon buildings, areas with holes and route relations are missing by design.");
+  out.push(`Profile ${d.profile ?? "v1"}; extracted ${d.extractedAt ?? "not recorded"}; endpoint ${d.endpoint ?? "not recorded"}`);
+  out.push(`Building parts ${d.ways.filter((w) => w.tags["building:part"]).length}; untagged ways (relation members) ${d.ways.filter((w) => Object.keys(w.tags).length === 0).length}`);
+  out.push(d.hasRelations ? `Relations ${d.relations.length} (see section 9). Route relations were not requested.` : "Relations are not in this extract, so multipolygon buildings, areas with holes and route relations are missing by design.");
 }
 
 function sectionIntegrity(d, out) {
@@ -438,7 +478,9 @@ function sectionSociety(d, out) {
   out.push(`Barrier ways ${bw.length}: ` + (tally(bw, (w) => w.tags.barrier).map(([k, n]) => `${k} ${n} (${km(bw.filter((w) => w.tags.barrier === k).reduce((s, w) => s + w.len, 0))} km)`).join(", ") || "none"));
   out.push(`Barrier nodes: ${list(tally(d.nodes, (n) => n.tags.barrier))}`);
   out.push(`Entrance nodes: ${list(tally(d.nodes, (n) => n.tags.entrance))}`);
-  out.push("  The extract only requested barrier=gate nodes, plus nodes tagged place, amenity, shop, station, tree, signals, bus stop or crossing. Lift gates, bollards and entrance=* nodes were not requested, so zero here means not downloaded.");
+  out.push(d.hasRelations
+    ? "  This profile requested every barrier, entrance and highway node, so a zero here means none is mapped in OSM (not that none exists)."
+    : "  The extract only requested barrier=gate nodes, plus nodes tagged place, amenity, shop, station, tree, signals, bus stop or crossing. Lift gates, bollards and entrance=* nodes were not requested, so zero here means not downloaded.");
   const gates = d.nodes.filter((n) => n.tags.barrier);
   out.push(`Gates by sector: ${list(tally(gates, (n) => sectorAt(d, n.c) ?? "outside the six sectors"))}`);
   const gateOnRoad = gates.filter((g) => d.roads.some((r) => Math.hypot(r.c[0] - g.c[0], r.c[1] - g.c[1]) < r.len + 5 && distToLine(g.c, r.xy) < 3)).length;
@@ -479,11 +521,58 @@ function sectionGaps(d, out) {
   if (!findByTag(d, /jagat/i).length) g.push("Jagat Farm: not present under that name.");
   if (!findByTag(d, /knowledge\s*park[\s-]*(1|i)(?![\dvix])/i).length) g.push("Knowledge Park I: not present under that name.");
   if (!d.landuse.some((l) => /knowledge\s*park[\s-]*(2|ii)(?![\dvix])/i.test(nameOf(l.tags) ?? ""))) g.push("Knowledge Park II: no area outline with that name (station only, if listed in 5c).");
-  g.push("Relations, entrance nodes, lift gates, bollards, street lamps and building parts were not downloaded.");
+  if (!d.hasRelations) g.push("Relations, entrance nodes, lift gates, bollards, street lamps and building parts were not downloaded.");
+  else {
+    const broken = d.relations.filter((r) => !r.clipped && (r.outer.open > 0 || r.outer.rings.length === 0)).length;
+    if (broken) g.push(`${broken} relations have outlines that do not close even though their geometry is complete.`);
+    if (!d.nodes.some((n) => n.tags.highway === "street_lamp")) g.push("No street lamps are mapped; lamp positions will have to be decorative.");
+    if (!d.nodes.some((n) => n.tags.entrance)) g.push("No building entrances are mapped.");
+    if (!d.ways.some((w) => w.tags["building:part"])) g.push("No building parts are mapped; building massing will come from footprints only.");
+  }
   for (const line of g) out.push(`- ${line}`);
 }
 
-export function audit(raw) {
+function sectionRelations(d, out) {
+  out.push(`\n== 9. RELATIONS, BUILDING PARTS AND STREET FURNITURE ==`);
+  if (!d.hasRelations) {
+    out.push("Not part of this extract (baseline profile). Run: node tools/fetch-osm.mjs --profile v2");
+    return;
+  }
+  const rs = d.relations;
+  out.push(`Relations ${rs.length}: ${list(tally(rs, (r) => r.tags.type ?? "(no type)"))}`);
+  out.push(`By main tag: ${list(tally(rs, (r) => kindOf(r.tags)), 15)}`);
+  const complete = rs.filter((r) => r.outer.rings.length > 0 && r.outer.open === 0);
+  const clipped = rs.filter((r) => r.clipped);
+  const broken = rs.filter((r) => !r.clipped && (r.outer.open > 0 || r.outer.rings.length === 0));
+  out.push(`Outline assembly: closed ${complete.length}; cut at the bbox ${clipped.length}; not closing although complete ${broken.length}${broken.length ? ` (ids ${broken.slice(0, 10).map((r) => r.id).join(", ")})` : ""}`);
+  out.push(`With inner rings (holes or courtyards): ${rs.filter((r) => r.inner.rings.length > 0).length}`);
+  const rb = rs.filter((r) => r.tags.building);
+  out.push(`Building relations ${rb.length}: usable footprints ${rb.filter((r) => complete.includes(r)).length}, total ${Math.round(rb.reduce((a, r) => a + Math.max(0, r.area), 0))} m2; with levels or height ${rb.filter((r) => r.tags["building:levels"] || r.tags.height).length}`);
+  const ids = new Set(d.ways.map((w) => w.id));
+  const refs = rs.flatMap((r) => r.members.filter((m) => m.type === "way").map((m) => m.ref));
+  out.push(`Member way references ${refs.length}; also present as ways in the extract ${refs.filter((x) => ids.has(x)).length} (the rest lie outside the bbox)`);
+  for (const r of rs.filter((x) => nameOf(x.tags)).sort((a, b) => b.area - a.area).slice(0, 40))
+    out.push(`  relation ${r.id} ${kindOf(r.tags)} "${nameOf(r.tags)}"${r.tags.admin_level ? ` admin_level ${r.tags.admin_level}` : ""}, ${r.clipped ? "cut at bbox" : `${(r.area / 1e4).toFixed(1)} ha, ${where(r.c)}`}`);
+
+  const parts = d.ways.filter((w) => w.tags["building:part"]);
+  out.push(`\nBuilding parts ${parts.length}: with height ${parts.filter((w) => w.tags.height).length}, with levels ${parts.filter((w) => w.tags["building:levels"]).length}, with roof tags ${parts.filter((w) => Object.keys(w.tags).some((k) => k.startsWith("roof:"))).length}`);
+  const attr = (k) => d.buildings.filter((w) => w.tags[k] !== undefined).length;
+  out.push(`Building attributes on footprints: levels ${attr("building:levels")}, height ${attr("height")}, roof:shape ${attr("roof:shape")}, roof:levels ${attr("roof:levels")}, building:material ${attr("building:material")}, building:colour ${attr("building:colour")}, start_date ${attr("start_date")}, addr:housenumber ${attr("addr:housenumber")}`);
+
+  const n = (fn) => d.nodes.filter(fn).length;
+  out.push(`\nStreet furniture nodes: street lamps ${n((x) => x.tags.highway === "street_lamp")}, traffic signals ${n((x) => x.tags.highway === "traffic_signals")}, crossings ${n((x) => x.tags.highway === "crossing")}, bus stops ${n((x) => x.tags.highway === "bus_stop")}, speed bumps ${n((x) => x.tags.traffic_calming)}, benches ${n((x) => x.tags.amenity === "bench")}, waste baskets ${n((x) => x.tags.amenity === "waste_basket")}, advertising ${n((x) => x.tags.advertising)}, power poles or towers ${n((x) => x.tags.power)}, towers and masts ${n((x) => x.tags.man_made)}`);
+  out.push(`Barrier nodes: ${list(tally(d.nodes, (x) => x.tags.barrier))}`);
+  out.push(`Entrance nodes: ${list(tally(d.nodes, (x) => x.tags.entrance))}`);
+  out.push(`Other highway nodes: ${list(tally(d.nodes, (x) => x.tags.highway), 12)}`);
+  out.push(`Point features by key: ${["shop", "amenity", "office", "craft", "tourism", "healthcare", "leisure"].map((k) => `${k} ${n((x) => x.tags[k])}`).join(", ")}; named nodes ${n((x) => nameOf(x.tags))}`);
+}
+
+const KP1 = /knowledge\s*park[\s-]*(1|i)(?![\dvix])|\bk\.?\s?p\.?[\s-]*(1|i)\b/i;
+const KP2 = /knowledge\s*park[\s-]*(2|ii)(?![\dvix])|\bk\.?\s?p\.?[\s-]*(2|ii)\b/i;
+const isCommerce = (f) => f.tags.shop || f.tags.office || f.tags.craft || COMMERCIAL_BUILDING.has(f.tags.building) || ["commercial", "retail"].includes(f.tags.landuse) || ["marketplace", "bank", "restaurant", "fast_food", "cafe", "atm", "pharmacy", "fuel"].includes(f.tags.amenity);
+const isEducation = (f) => EDU.has(f.tags.amenity) || f.tags.landuse === "education" || ["university", "college", "school"].includes(f.tags.building);
+
+function build(raw) {
   const d = prepare(raw);
   d.roads = d.ways.filter((w) => w.tags.highway);
   d.buildings = d.ways.filter((w) => w.tags.building);
@@ -492,8 +581,70 @@ export function audit(raw) {
     label,
     way: d.ways.filter((w) => w.closed && w.tags.landuse && NAME_KEYS.some((k) => re.test(w.tags[k] ?? ""))).sort((a, b) => b.area - a.area)[0],
   }));
+  return d;
+}
+
+/** Flat list of [label, number] used to compare two extracts. */
+export function metrics(raw) {
+  const d = build(raw);
+  const all = [...d.ways, ...d.nodes];
+  const dupIds = (items) => items.length - new Set(items.map((x) => x.id)).size;
+  const m = [];
+  const add = (k, v) => m.push([k, typeof v === "number" ? Math.round(v * 10) / 10 : v]);
+  add("ways", d.ways.length);
+  add("tagged nodes", d.nodes.length);
+  add("relations", d.hasRelations ? d.relations.length : "not requested");
+  add("road ways", d.roads.length);
+  add("road length km", d.roads.reduce((a, r) => a + r.len, 0) / 1000);
+  add("named road ways", d.roads.filter((r) => r.tags.name).length);
+  add("distinct road names", new Set(d.roads.map((r) => r.tags.name).filter(Boolean)).size);
+  add("roads with lanes tag", d.roads.filter((r) => r.tags.lanes).length);
+  add("roundabout ways", d.roads.filter((r) => r.tags.junction === "roundabout").length);
+  add("building footprints (closed ways)", d.buildings.filter((b) => b.closed).length);
+  add("building relations with a usable outline", d.relations.filter((r) => r.tags.building && r.outer.rings.length && !r.outer.open).length);
+  add("buildings with levels or height", d.buildings.filter((b) => b.tags["building:levels"] || b.tags.height).length);
+  add("named buildings", d.buildings.filter((b) => nameOf(b.tags)).length);
+  add("building parts", d.ways.filter((w) => w.tags["building:part"]).length);
+  add("land-use polygons", d.landuse.length);
+  add("leisure areas", d.ways.filter((w) => w.tags.leisure).length);
+  add("barrier ways", d.ways.filter((w) => w.tags.barrier).length);
+  for (const s of d.sectors) {
+    add(`${s.label}: outline found`, s.way ? "yes" : "no");
+    add(`${s.label}: buildings inside`, s.way ? d.buildings.filter((b) => inPolygon(b.c, s.way.xy)).length : 0);
+    add(`${s.label}: point features inside`, s.way ? d.nodes.filter((n) => inPolygon(n.c, s.way.xy)).length : 0);
+  }
+  const jf = findByTag(d, /jagat/i).map((h) => h.f);
+  add("Jagat: features naming it", jf.length);
+  add("Jagat: commerce features within 300 m of those", jf.length ? all.filter((f) => isCommerce(f) && jf.some((j) => Math.hypot(j.c[0] - f.c[0], j.c[1] - f.c[1]) < 300)).length : 0);
+  add("commerce features (whole extract)", all.filter(isCommerce).length);
+  add("shop nodes", d.nodes.filter((n) => n.tags.shop).length);
+  add("Knowledge Park I: features naming it", findByTag(d, KP1).length);
+  add("Knowledge Park II: features naming it", findByTag(d, KP2).length);
+  add("Knowledge Park II: non-transit features naming it", findByTag(d, KP2).filter((h) => !(h.f.tags.railway || h.f.tags.public_transport || h.f.tags.highway === "bus_stop")).length);
+  add("education features", all.filter(isEducation).length);
+  add("named education features", all.filter((f) => isEducation(f) && nameOf(f.tags)).length);
+  add("gates and other barrier nodes", d.nodes.filter((n) => n.tags.barrier).length);
+  add("entrance nodes", d.nodes.filter((n) => n.tags.entrance).length);
+  add("street lamps", d.nodes.filter((n) => n.tags.highway === "street_lamp").length);
+  add("bollards", d.nodes.filter((n) => n.tags.barrier === "bollard").length);
+  add("traffic signals", d.nodes.filter((n) => n.tags.highway === "traffic_signals").length);
+  add("relations: outline closed", d.relations.filter((r) => r.outer.rings.length && !r.outer.open).length);
+  add("relations: cut at bbox", d.relations.filter((r) => r.clipped).length);
+  add("relations: outline broken", d.relations.filter((r) => !r.clipped && (r.outer.open > 0 || !r.outer.rings.length)).length);
+  add("INVALID duplicate way ids", dupIds(d.ways));
+  add("INVALID duplicate node ids", dupIds(d.nodes));
+  add("INVALID duplicate relation ids", dupIds(d.relations));
+  add("INVALID ways with fewer than 2 points", d.ways.filter((w) => w.xy.length < 2).length);
+  add("INVALID buildings not closed", d.buildings.filter((b) => !b.closed).length);
+  add("INVALID closed buildings under 1 m2", d.buildings.filter((b) => b.closed && b.area < 1).length);
+  add("INVALID coordinates outside 28-29 N, 77-78 E", d.ways.filter((w) => w.pts.some((v, i) => (i % 2 ? v < 77 || v > 78 : v < 28 || v > 29))).length + d.nodes.filter((n) => !(n.lat > 28 && n.lat < 29 && n.lon > 77 && n.lon < 78)).length);
+  return m;
+}
+
+export function audit(raw) {
+  const d = build(raw);
   const out = [];
-  for (const section of [sectionDataset, sectionIntegrity, sectionRoads, sectionSectors, sectionTargets, sectionBuildings, sectionSociety, sectionGaps]) section(d, out);
+  for (const section of [sectionDataset, sectionIntegrity, sectionRoads, sectionSectors, sectionTargets, sectionBuildings, sectionSociety, sectionGaps, sectionRelations]) section(d, out);
   return out.join("\n");
 }
 

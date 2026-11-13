@@ -8,3 +8,7 @@ playwright-report/
 test-results/
 .DS_Store
 *.log
+
+# OSM extracts and reports: committed only when the project owner decides (git add -f)
+data/osm/*.json
+data/osm/*.txt

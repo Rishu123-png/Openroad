@@ -82,6 +82,21 @@ Classification rule: a building is called institutional, commercial or an
 apartment block only when its own tags or an enclosing tagged area say so.
 Guesses from footprint size are printed in rows marked UNCONFIRMED.
 
+## Extract profiles
+
+`tools/fetch-osm.mjs --profile v2` writes a second, wider extract to
+`greater-noida-corridor-v2.json` without touching the baseline (see
+`data/osm/README.md`). `tools/compare-osm.mjs` compares two extracts metric by
+metric, lists features present in only one of them, and flags any metric that
+got worse. The v2 query has been checked for syntax by reading only: the
+agent's sandbox could not reach an Overpass server, so its first real run is
+on the project owner's machine. If a server rejects the bbox-limited relation
+output, the script retries with a simpler form.
+
+The wider query can only download what OpenStreetMap already holds. It cannot
+add shops at Jagat Farm or campuses in the Knowledge Parks that nobody has
+mapped.
+
 ## Confidence classes
 
 Every generated feature will carry one of these, and the classes will stay
