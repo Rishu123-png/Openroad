@@ -2,7 +2,7 @@ import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import type { Scene } from "@babylonjs/core/scene";
+import { Scene } from "@babylonjs/core/scene";
 
 export interface Daylight {
   sky: HemisphericLight;
@@ -23,7 +23,7 @@ export function createDaylight(scene: Scene): Daylight {
   sun.diffuse = new Color3(1, 0.96, 0.88);
 
   // Distance haze hides the hard edge of the ground plane.
-  scene.fogMode = 3; // Scene.FOGMODE_LINEAR
+  scene.fogMode = Scene.FOGMODE_LINEAR;
   scene.fogColor = new Color3(0.55, 0.75, 0.93);
   scene.fogStart = 150;
   scene.fogEnd = 420;

@@ -57,19 +57,25 @@ function boot(): () => void {
     return () => errorOverlay.dispose();
   }
 
-  // Free GPU resources when the tab closes. A page restored from the
-  // back/forward cache is reloaded, because its engine has been disposed.
-  window.addEventListener("pagehide", shutdown, { once: true });
-  window.addEventListener("pageshow", (event) => {
-    if (event.persisted) window.location.reload();
-  });
   return shutdown;
 }
 
 const shutdown = boot();
 
+// Free GPU resources when the tab closes. A page restored from the
+// back/forward cache is reloaded, because its engine was disposed on pagehide.
+const handlePageShow = (event: PageTransitionEvent): void => {
+  if (event.persisted) window.location.reload();
+};
+window.addEventListener("pagehide", shutdown);
+window.addEventListener("pageshow", handlePageShow);
+
 // During development, dispose the old game before Vite swaps in new code,
 // otherwise every edit would leave another engine running on the canvas.
 if (import.meta.hot) {
-  import.meta.hot.dispose(shutdown);
+  import.meta.hot.dispose(() => {
+    window.removeEventListener("pagehide", shutdown);
+    window.removeEventListener("pageshow", handlePageShow);
+    shutdown();
+  });
 }

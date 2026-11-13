@@ -38,6 +38,8 @@ describe("Game", () => {
     expect(scene.getMeshByName("edgeLineRight")).not.toBeNull();
     expect(scene.lights.map((light) => light.name).sort()).toEqual(["skyLight", "sunLight"]);
     expect(scene.activeCamera).toBe(game.cameraRig.camera);
+    // Keyboard input must only reach the camera through the input layer.
+    expect(Object.keys(game.cameraRig.camera.inputs.attached)).not.toContain("keyboard");
 
     // The road lies on top of the ground and is as wide as specified.
     const road = scene.getMeshByName("road")!;

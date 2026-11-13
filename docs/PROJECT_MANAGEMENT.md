@@ -86,6 +86,26 @@ Give it one milestone-sized task at a time, with:
 3. Perform the acceptance test in Chrome with DevTools open.
 4. Merge, or reply with what failed.
 
+### Current state of the branches
+
+| Branch | State |
+| --- | --- |
+| `main` | Initial commit only. Nothing merges here without explicit approval |
+| `develop` | Does not exist yet. The owner creates it from `main` when the foundation is approved |
+| `arena/cf0809af-openroad` | The agent's development branch. All OPENROAD 0.1 work so far is here |
+
+An agent session can commit and push only to its own `arena/...` branch. It cannot create `develop` or feature branches, so its work reaches `develop` through a pull request that the owner approves.
+
+### What the agent can and cannot verify
+
+| Check | Agent |
+| --- | --- |
+| Type check, unit tests, production build | Yes |
+| Page loads without console errors; overlay text; keyboard and mouse controls | Yes, in headless Chromium |
+| The picture is correct | Yes, from screenshots, with software rendering |
+| Frame rate, GPU behaviour, visual quality on real hardware | No |
+| Browsers other than Chromium | No |
+
 ## Definition of done
 
 From section 16.3. A feature is done when it has:
@@ -101,6 +121,6 @@ From section 16.3. A feature is done when it has:
 
 | Session | Stage | Output | Status |
 | --- | --- | --- | --- |
-| [01](sessions/SESSION_01.md) | 1 — Project foundation | Browser-playable 3D application | Implemented, awaiting browser check |
+| [01](sessions/SESSION_01.md) | 1 — Project foundation | Browser-playable 3D application | Verified in headless Chromium; awaiting check on real hardware and approval to merge |
 | 02 | 2 — Vehicle prototype | One drivable car | Planned |
 | 03 | 3 — AI traffic | One AI vehicle following a route | Planned |

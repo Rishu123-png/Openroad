@@ -35,6 +35,9 @@ export class OrbitCameraRig {
     this.camera.upperBetaLimit = Math.PI / 2 - 0.03; // never dip below the ground
     this.camera.wheelDeltaPercentage = 0.02;
     this.camera.panningSensibility = 0; // orbit and zoom only
+    // The keyboard belongs to the input layer. Without this, Babylon's default
+    // camera input would also react to the arrow keys.
+    this.camera.inputs.removeByType("ArcRotateCameraKeyboardMoveInput");
     scene.activeCamera = this.camera;
   }
 

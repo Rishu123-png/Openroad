@@ -12,14 +12,15 @@ Scope: OPENROAD 0.1, the browser client only. This document grows with each mile
 | `game/scene/` | Builds the static test environment | Babylon.js |
 | `game/lighting/` | Lights, sky colour, fog | Babylon.js |
 | `game/camera/` | Camera rig and its view presets | Babylon.js |
-| `input/` | Turns device events into game actions | Nothing |
+| `input/` | Turns keyboard events into game actions | Nothing |
 | `ui/` | DOM overlay: status line, help text, error screen | DOM only |
 
 Rules that keep these separate:
 
 1. `ui/` never imports Babylon.js, and `game/` never touches the DOM overlay. `Game` reports through callbacks (`onStats`, `onContextChange`) and `main.ts` forwards them to the overlay.
 2. Game code reads actions (`InputAction.Accelerate`), never keys. A gamepad or touch source can be added later without changing game code (master plan section 8.4).
-3. `Game` receives its engine. In the browser that is a WebGL `Engine`. In tests it is Babylon's `NullEngine`, so the real scene code runs without a GPU or a DOM.
+3. The keyboard reaches the game only through `input/`. Babylon's built-in camera keyboard input is removed, so the arrow keys do not move the camera behind the input layer's back. Mouse and touch orbiting still use Babylon's camera input, attached to the canvas.
+4. `Game` receives its engine. In the browser that is a WebGL `Engine`. In tests it is Babylon's `NullEngine`, so the real scene code runs without a GPU or a DOM.
 
 ## Lifecycle
 
@@ -67,6 +68,31 @@ Each object disposes only what it created. `Game` does not dispose the engine or
 | Orbit camera with three presets | An inspection camera for the empty scene. The chase camera replaces it when the vehicle exists |
 | No UI framework | The overlay is three elements. Revisit when menus are built |
 | No physics engine | Rapier.js is planned for the vehicle milestone and is not installed |
+
+## Verification
+
+| Layer | How it is checked | Automated in the repository |
+| --- | --- | --- |
+| Types | `npm run typecheck` | Yes |
+| Scene, camera, lifecycle, disposal | `tests/Game.test.ts` on Babylon's `NullEngine` | Yes |
+| Keyboard input | `tests/KeyboardInput.test.ts` | Yes |
+| Production bundle | `npm run build` | Yes |
+| Real rendering, overlay, `main.ts`, error screen | Manual check in a browser (see Session 01) | No |
+
+## Known technical debt
+
+| Item | Impact | When to address |
+| --- | --- | --- |
+| No browser test in the repository | `main.ts`, `Overlay` and real rendering are only checked by hand | Add Playwright before the vehicle milestone grows the UI |
+| No continuous integration | Checks run only when someone remembers | Add a GitHub Actions workflow running typecheck, test and build |
+| No linter or formatter | Style is unenforced | Before the first collaborator joins |
+| Single 1.1 MB JavaScript chunk | Slower first load | When assets and Rapier.js are added; split with dynamic imports |
+| `KeyboardInput` calls `preventDefault` on every bound key | Would block typing W, A, S, D or Space in a text field | Before chat or any text input exists |
+| Driving actions are bound but unused | None today | Consumed by the vehicle controller in Session 02 |
+| Only the keyboard input source exists | No gamepad or touch | Android milestone |
+| No shadows, no textures, flat sky colour | Plain look | Graphics milestone |
+| Context-loss handling is unit-tested with a simulated event only | Real GPU loss is unverified | Test with `WEBGL_lose_context` when Playwright is added |
+| Dev server allows `.e2b.app` hosts | Development only; needed for the agent's hosted preview | Remove if agent previews are no longer used |
 
 ## Not built yet
 
