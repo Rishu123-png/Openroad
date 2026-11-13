@@ -1,0 +1,15 @@
+{
+  "name": "openroad",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OPENROAD - browser-based open-world driving and social game",
+  "workspaces": ["apps/*"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "npm run dev --workspace @openroad/web",
+    "build": "npm run build --workspace @openroad/web",
+    "preview": "npm run preview --workspace @openroad/web",
+    "typecheck": "npm run typecheck --workspace @openroad/web",
+    "test": "npm run test --workspace @openroad/web"
+  }
+}
