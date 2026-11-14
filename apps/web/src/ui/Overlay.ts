@@ -6,6 +6,9 @@ export class Overlay {
   private readonly status: HTMLDivElement;
   private readonly detail: HTMLDivElement;
   private readonly help: HTMLDivElement;
+  private readonly speed: HTMLDivElement;
+  private readonly legend: HTMLDivElement;
+  private readonly credit: HTMLDivElement;
   private readonly error: HTMLDivElement;
   private readonly errorDetail: HTMLParagraphElement;
 
@@ -22,6 +25,16 @@ export class Overlay {
     this.help = doc.createElement("div");
     this.help.className = "or-help";
 
+    this.speed = doc.createElement("div");
+    this.speed.className = "or-speed";
+    this.speed.hidden = true;
+
+    this.legend = doc.createElement("div");
+    this.legend.className = "or-legend";
+
+    this.credit = doc.createElement("div");
+    this.credit.className = "or-credit";
+
     this.error = doc.createElement("div");
     this.error.className = "or-error";
     this.error.setAttribute("role", "alert");
@@ -31,7 +44,7 @@ export class Overlay {
     this.errorDetail = doc.createElement("p");
     this.error.append(title, this.errorDetail);
 
-    root.append(this.status, this.detail, this.help, this.error);
+    root.append(this.status, this.detail, this.help, this.speed, this.legend, this.credit, this.error);
   }
 
   setStatus(text: string): void {
@@ -42,6 +55,24 @@ export class Overlay {
   /** Smaller line under the status, for rendering statistics. */
   setDetail(text: string): void {
     if (this.detail.textContent !== text) this.detail.textContent = text;
+  }
+
+  /** Speedometer. Whole kilometres per hour, so the DOM changes only when the number does. */
+  setSpeed(kmh: number, note = ""): void {
+    const text = `${Math.round(kmh)} km/h${note ? ` · ${note}` : ""}`;
+    if (this.speed.hidden) this.speed.hidden = false;
+    if (this.speed.textContent !== text) this.speed.textContent = text;
+  }
+
+  /** Title and colour key of the active debug view; empty hides it. */
+  setLegend(text: string): void {
+    if (this.legend.textContent !== text) this.legend.textContent = text;
+  }
+
+  /** Data credit and data-quality notice, always visible while map data is shown. */
+  setCredit(text: string, warning = false): void {
+    this.credit.textContent = text;
+    this.credit.classList.toggle("or-credit-warning", warning);
   }
 
   setHelp(text: string): void {
@@ -61,6 +92,9 @@ export class Overlay {
     this.status.remove();
     this.detail.remove();
     this.help.remove();
+    this.speed.remove();
+    this.legend.remove();
+    this.credit.remove();
     this.error.remove();
   }
 }

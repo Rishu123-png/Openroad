@@ -23,7 +23,7 @@ function crownColour(low: Color, high: Color): (height: number, noise: number) =
 }
 
 /** A spreading shade tree such as neem or peepal. Each seed gives a different silhouette. */
-function broadTree(seed: number, detail: number): GeometryBuffer {
+export function broadTree(seed: number, detail: number): GeometryBuffer {
   const r = new Random(seed);
   const g = new GeometryBuffer();
   const trunk = r.range(2.8, 3.8);
@@ -44,7 +44,7 @@ function broadTree(seed: number, detail: number): GeometryBuffer {
 }
 
 /** A tall narrow evergreen, like the ashoka trees planted along Indian boundary walls. */
-function columnarTree(seed: number, detail: number): GeometryBuffer {
+export function columnarTree(seed: number, detail: number): GeometryBuffer {
   const r = new Random(seed);
   const g = new GeometryBuffer();
   g.cylinder(0, 0, 0, 1.6, 0.12, 0.1, 6, BARK, { cap: false });
@@ -61,7 +61,7 @@ function columnarTree(seed: number, detail: number): GeometryBuffer {
 }
 
 /** A royal palm: smooth grey trunk, green crown shaft and drooping fronds. */
-function palmTree(seed: number, detail: number): GeometryBuffer {
+export function palmTree(seed: number, detail: number): GeometryBuffer {
   const r = new Random(seed);
   const g = new GeometryBuffer();
   const height = r.range(7.5, 10);
@@ -107,7 +107,7 @@ function palmTree(seed: number, detail: number): GeometryBuffer {
   return g;
 }
 
-function shrub(seed: number, flowering: boolean): GeometryBuffer {
+export function shrub(seed: number, flowering: boolean): GeometryBuffer {
   const r = new Random(seed);
   const g = new GeometryBuffer();
   const green = crownColour(srgb(52, 88, 42), srgb(116, 152, 68));

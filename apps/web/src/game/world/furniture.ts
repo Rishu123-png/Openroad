@@ -10,7 +10,7 @@ const DARK = srgb(34, 36, 40);
 const SIGNAL_YELLOW = srgb(222, 172, 30);
 
 /** A 9 m lamp post with two arms, as used on divided roads. Arms reach along X, over both carriageways. */
-function streetLight(): GeometryBuffer {
+export function streetLight(): GeometryBuffer {
   const g = new GeometryBuffer();
   g.box(0, 0, 0, 0.5, 0.35, 0.5, { color: srgb(120, 120, 116) });
   g.cylinder(0, 0.35, 0, 8.6, 0.11, 0.065, 8, GALVANISED);

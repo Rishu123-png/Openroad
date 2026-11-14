@@ -73,3 +73,50 @@ body {
 .or-error[hidden] {
   display: none;
 }
+
+.or-speed,
+.or-legend,
+.or-credit {
+  position: fixed;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.or-speed {
+  right: 12px;
+  bottom: 44px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.or-speed[hidden] {
+  display: none;
+}
+
+.or-legend {
+  top: 12px;
+  right: 12px;
+  max-width: 420px;
+  font-size: 12px;
+  color: #dbe4ec;
+}
+
+.or-legend:empty,
+.or-credit:empty {
+  display: none;
+}
+
+.or-credit {
+  right: 12px;
+  bottom: 12px;
+  font-size: 11px;
+  color: #b6c2cf;
+}
+
+.or-credit-warning {
+  color: #1a1206;
+  background: #f0b429;
+  font-weight: 600;
+}

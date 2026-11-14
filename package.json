@@ -11,6 +11,6 @@
     "preview": "npm run preview --workspace @openroad/web",
     "typecheck": "npm run typecheck --workspace @openroad/web",
     "test": "npm run test --workspace @openroad/web",
-    "test:tools": "node --test tools/inspect-osm.test.mjs tools/geodata.test.mjs"
+    "test:tools": "node --test tools/inspect-osm.test.mjs tools/geodata.test.mjs tools/district.test.mjs"
   }
 }

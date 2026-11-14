@@ -10,6 +10,7 @@ export const InputAction = {
   Handbrake: "handbrake",
   CameraChange: "cameraChange",
   Reset: "reset",
+  DebugView: "debugView",
 } as const;
 
 export type InputAction = (typeof InputAction)[keyof typeof InputAction];
@@ -27,4 +28,5 @@ export const DEFAULT_KEY_BINDINGS: Readonly<Record<string, InputAction>> = {
   Space: InputAction.Handbrake,
   KeyC: InputAction.CameraChange,
   KeyR: InputAction.Reset,
+  KeyV: InputAction.DebugView,
 };

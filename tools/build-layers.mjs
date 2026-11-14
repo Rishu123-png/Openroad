@@ -247,7 +247,7 @@ export function convert(data, options = {}) {
     region: options.region ?? "greater-noida",
     attribution: ATTRIBUTION,
     licence: "ODbL-1.0 (derivative database of OpenStreetMap)",
-    source: { file: options.sourceFile ?? null, profile: data.profile ?? "v1", osmBase: data.osmBase ?? null, extractedAt: data.extractedAt ?? null, endpoint: data.endpoint ?? null, query: data.query ?? null },
+    source: { file: options.sourceFile ?? null, profile: data.profile ?? "v1", osmBase: data.osmBase ?? null, extractedAt: data.extractedAt ?? null, endpoint: data.endpoint ?? null, query: data.query ?? null, ...(data.synthetic ? { synthetic: true } : {}) },
     builtAt: options.builtAt ?? new Date().toISOString(),
     projection: { name: proj.name, origin: proj.origin, metresPerDegLat: proj.metresPerDegLat, metresPerDegLon: proj.metresPerDegLon, axes: "+x east, +z north, metres from the origin" },
     bbox,

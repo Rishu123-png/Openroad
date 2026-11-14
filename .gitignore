@@ -13,3 +13,6 @@ test-results/
 data/osm/*.json
 data/osm/*.txt
 data/region/
+
+# District files built from the region layers (ODbL data; rebuilt with tools/build-district.mjs)
+apps/web/public/regions/

@@ -1,4 +1,5 @@
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import earcut from "earcut";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import type { Scene } from "@babylonjs/core/scene";
 import { hash2, valueNoise } from "../../utils/random";
@@ -307,6 +308,37 @@ export class GeometryBuffer {
       this.vertex(p, n, u, v, WHITE);
     }
     for (let i = 0; i < segments; i++) this.triangle(mid, ring + i, ring + i + 1, n);
+  }
+
+  /**
+   * A flat polygon facing up, with optional holes. Rings are lists of [x, z]
+   * points in metres; a repeated closing point is ignored. The outline is
+   * triangulated as given, so its shape is kept exactly.
+   */
+  polygonY(outer: ReadonlyArray<readonly number[]>, holes: ReadonlyArray<ReadonlyArray<readonly number[]>>, y: number, color: Color = WHITE): void {
+    const flat: number[] = [];
+    const holeStarts: number[] = [];
+    const push = (ring: ReadonlyArray<readonly number[]>): void => {
+      const last = ring.length - 1;
+      const closed = last > 0 && ring[0]![0] === ring[last]![0] && ring[0]![1] === ring[last]![1];
+      for (let i = 0; i < (closed ? last : ring.length); i++) flat.push(ring[i]![0]!, ring[i]![1]!);
+    };
+    push(outer);
+    for (const hole of holes) {
+      holeStarts.push(flat.length / 2);
+      push(hole);
+    }
+    const triangles = earcut(flat, holeStarts, 2);
+    const up: Vec3 = [0, 1, 0];
+    const base = this.vertexCount;
+    for (let i = 0; i < flat.length; i += 2) this.vertex([flat[i]!, y, flat[i + 1]!], up, flat[i]!, flat[i + 1]!, color);
+    for (let i = 0; i < triangles.length; i += 3) this.triangle(base + triangles[i]!, base + triangles[i + 1]!, base + triangles[i + 2]!, up);
+  }
+
+  /** A vertical wall between two ground points, facing along (nx, nz). Texture runs along the wall in metres from `u0`. */
+  wall(ax: number, az: number, bx: number, bz: number, y0: number, y1: number, nx: number, nz: number, color: Color = WHITE, u0 = 0): void {
+    const u1 = u0 + Math.hypot(bx - ax, bz - az);
+    this.quad([[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [nx, 0, nz], [u0, y0, u1, y0, u1, y1, u0, y1], color);
   }
 
   /** Creates the mesh. The buffer can be discarded afterwards. */
