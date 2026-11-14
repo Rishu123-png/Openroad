@@ -72,6 +72,12 @@ export function addLine(g: GeometryBuffer, road: DistrictRoad, offset: number, d
   return made;
 }
 
+/**
+ * True when the way itself carries a lanes tag. Otherwise `road.lanes` is a default for the road class, and the
+ * district is drawn without lane dividers on that road (see `paintedLanes`): no lane count is shown that nobody recorded.
+ */
+export const laneCountMapped = (road: DistrictRoad): boolean => road.widthStatus === "source-lanes" || Number.isFinite(parseFloat(road.tags?.lanes ?? ""));
+
 /** Lane lines for one road, by rule. Returns the number of painted pieces. */
 export function addLaneMarkings(g: GeometryBuffer, road: DistrictRoad, y: number, junctionZones: SegmentGrid): number {
   const M = MARKING_RULES;
@@ -174,4 +180,9 @@ export function addSpeedBreaker(g: GeometryBuffer, x: number, z: number, roads: 
     strip(g, cx - best.ax * 0.45, cz - best.az * 0.45, cx + best.ax * 0.45, cz + best.az * 0.45, (o1 - o0) / 2, y, k % 2 === 0 ? [1, 0.72, 0.05] : [0.12, 0.12, 0.12]);
   }
   return true;
+}
+
+/** The road as it is painted in the district: a lane count that is only a class default is reduced to the least the road can have. */
+export function paintedLanes(road: DistrictRoad): DistrictRoad {
+  return laneCountMapped(road) ? road : { ...road, lanes: road.oneway ? 1 : 2 };
 }

@@ -11,7 +11,7 @@ function signedArea(ring: readonly Point[]): number {
 }
 
 /** +1 when the outside of the building is to the right of each edge of this ring, -1 when it is to the left. */
-function outwardSide(ring: readonly Point[], isHole: boolean): 1 | -1 {
+export function outwardSide(ring: readonly Point[], isHole: boolean): 1 | -1 {
   // For a counter-clockwise ring the outside is to the right. A courtyard wall faces into the hole instead.
   return signedArea(ring) > 0 !== isHole ? 1 : -1;
 }
@@ -99,9 +99,12 @@ const FRAME: Color = [0.75, 0.73, 0.68];
  * and balconies are requested with `generated` set, so the caller can mark
  * them apart from the mapped walls and roof in the data views.
  *
+ * `wallRow` shifts the wall pattern up its texture, in metres: the generic texture stacks several plain variants
+ * and this picks one (see buildingAppearance.ts). Zero leaves the pattern as it always was.
+ *
  * @returns the number of balconies added
  */
-export function dressBuilding(layer: (key: MaterialKey, generated?: boolean) => GeometryBuffer, building: DistrictBuilding, wallColor: Color, roofColor: Color): number {
+export function dressBuilding(layer: (key: MaterialKey, generated?: boolean) => GeometryBuffer, building: DistrictBuilding, wallColor: Color, roofColor: Color, wallRow = 0): number {
   const R = FACADE_RULES;
   const style = FACADE_STYLES[building.category];
   const h = usableHeight(building.height);
@@ -133,7 +136,7 @@ export function dressBuilding(layer: (key: MaterialKey, generated?: boolean) => 
           layer(style.ground).wallUV(lx, lz, rx, rz, 0, base, nx, nz, wallColor, 0, uEnd, 0, base);
         }
         const floors = Math.max(1, Math.round((h - base) / FACADE.floorHeight));
-        layer(style.wall).wallUV(lx, lz, rx, rz, base, h, nx, nz, wallColor, 0, uEnd, 0, floors * FACADE.floorHeight);
+        layer(style.wall).wallUV(lx, lz, rx, rz, base, h, nx, nz, wallColor, 0, uEnd, wallRow, wallRow + floors * FACADE.floorHeight);
 
         if (!isHole && style.door && bays >= 2 && (!door || len > door.len)) door = { ax: lx, az: lz, dx: (rx - lx) / len, dz: (rz - lz) / len, nx, nz, len, bays };
 

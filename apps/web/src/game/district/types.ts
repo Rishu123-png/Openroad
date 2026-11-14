@@ -33,6 +33,13 @@ export interface DistrictBuilding {
   centre: Point;
   inSector: boolean;
   clipped: boolean;
+  /** Where the category came from. Absent in files built before this field existed: derive it with provenance.ts. */
+  categoryStatus?: "source" | "inferred" | "none";
+  /** Surroundings only. Never decides the category. */
+  context?: { landuse: string | null; area: string | null };
+  /** Ids of the mapped features an inferred category rests on. */
+  evidence?: string[];
+  name?: string | null;
   fromRelation: boolean;
 }
 

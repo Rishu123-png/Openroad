@@ -104,3 +104,33 @@ and no safety removal.
 
 `experience.test.ts` "does not run cars into each other" checks every pair
 everywhere again, junctions included, by centre distance and by body.
+
+## Reconstruction and provenance (M004)
+
+`apps/web/tests/realism.test.ts` (synthetic fixtures, `tests/fixtures/realismDistrict.ts`):
+
+| Protected | Test |
+|---|---|
+| Stable appearance from the building id | "gives the same building the same look every time", "builds each mapped building once ... the same on every load" |
+| Footprint preservation | "keeps the footprint: every wall and band stands on a mapped edge and roof objects stay inside" |
+| Courtyard preservation | "keeps courtyards open" |
+| No duplicate building geometry | "builds each mapped building once" (roof area equals footprint area) |
+| Height provenance | "separates source, inferred and estimated heights" |
+| Road width provenance | "separates mapped, lane-derived and estimated road widths", "records every road's class, access, width basis ..." |
+| Gate placement | "stands a gate only at a mapped gate point", "plans gates from the mapped points alone" |
+| No fabricated compounds | "invents no compound" |
+| Marking width rules | "paints by width and by what is mapped" |
+| Decoration off the roads | "keeps everything it adds off the roads", "plans verges only where the ground beside the road is free" |
+| Named features | "labels only what the map names, where the map puts it" |
+| Private access | "keeps private and permissive access exactly as mapped" |
+| Unknown buildings stay generic | "marks a building of unknown use as a generic reconstruction" |
+
+Tool tests (`tools/district.test.mjs`) cover category inference, the generic height bands and
+the recorded category status.
+
+`apps/web/tests/real/alpha1Realism.real.test.ts` runs the same invariants on the real file
+(`npm run test:real`) with every expectation derived from that file, and prints the measured
+counts: provenance totals, gates, labels, meshes, materials and world build time. It is
+skipped where the file is absent.
+
+`npm run audit:district` prints what the district file contains (read only).

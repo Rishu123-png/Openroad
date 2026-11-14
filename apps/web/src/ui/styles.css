@@ -225,3 +225,44 @@ body {
 .or-button-primary:hover {
   background: #379660;
 }
+
+/* Names of mapped places, floated over the 3D view at their mapped positions. */
+.or-labels {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.or-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #f4f6f8;
+  background: rgba(20, 28, 36, 0.72);
+  border-radius: 4px;
+  border-bottom: 2px solid #8fa3b5;
+}
+
+.or-label-station {
+  font-size: 13px;
+  background: rgba(18, 74, 122, 0.85);
+  border-bottom-color: #6fc3ff;
+}
+
+.or-label-place {
+  border-bottom-color: #f0b429;
+}
+
+.or-label-area {
+  background: rgba(24, 70, 40, 0.75);
+  border-bottom-color: #7fcf8f;
+}
+
+.or-label-gate {
+  font-weight: 500;
+  border-bottom-color: #c9b99a;
+}

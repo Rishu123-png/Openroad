@@ -17,7 +17,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { clipLine, clipPolygon, inside, pointInRing, ringArea } from "./geo/clip.mjs";
-import { buildingHeight, CATEGORIES, classifyBuilding, ESTIMATED_HEIGHTS } from "./district/classify.mjs";
+import { buildingHeight, CATEGORIES, classifyBuilding, ESTIMATED_HEIGHTS, genericHeight, inferCategory } from "./district/classify.mjs";
 
 export const SECTORS = { "alpha-1": { label: "Alpha 1", pattern: /^alpha[\s-]*(1|i)$/i } };
 const NAME_KEYS = ["name", "name:en", "alt_name", "official_name", "short_name"];
@@ -154,6 +154,25 @@ export function buildDistrict(manifest, layers, options = {}) {
   const furniture = points(layers.furniture).map((p) => ({ ...p, kind: p.tags.highway ?? p.tags.natural ?? p.tags.man_made ?? p.tags.power ?? p.tags.amenity ?? "other" }));
   const pois = points(layers.pois).map((p) => ({ ...p, name: p.tags.name ?? null, kind: ["shop", "amenity", "office", "craft", "tourism", "healthcare", "leisure", "place"].map((k) => (p.tags[k] ? `${k}=${p.tags[k]}` : null)).find(Boolean) ?? "named" }));
 
+  // ---- evidence from surroundings (see classify.mjs): category status, context, and estimates for unknown buildings
+  const landuseAreas = areas.filter((a) => a.kind !== "sector" && (a.tags.landuse || a.tags.amenity));
+  for (const b of buildings) {
+    const around = landuseAreas.filter((a) => inPolygons(b.centre, a.polygons));
+    const residential = around.find((a) => a.tags.landuse === "residential") ?? (sector.tags.landuse === "residential" && b.inSector ? { id: sector.id, tags: sector.tags } : null);
+    b.context = { landuse: residential ? "residential" : (around.find((a) => a.tags.landuse)?.tags.landuse ?? null), area: residential?.id ?? around.find((a) => a.tags.landuse)?.id ?? null };
+    b.evidence = [];
+    b.categoryStatus = b.category === "unclassified" ? "none" : "source";
+    if (b.category === "unclassified") {
+      const inside = pois.filter((p) => inPolygons(p.point, b.polygons));
+      const inferred = inferCategory(inside, around);
+      if (inferred) {
+        Object.assign(b, { category: inferred.category, categoryRule: inferred.rule, categoryStatus: "inferred", evidence: inferred.evidence });
+        Object.assign(b, buildingHeight(b.id, b.tags, b.category, b.area, heights));
+      } else if (b.heightStatus === "estimated") Object.assign(b, genericHeight(b.id, b.area, heights));
+    }
+    b.name = b.tags.name ?? null;
+  }
+
   const spawn = findSpawn(roads, buildings, rect, inSector, centreOf(all));
 
   const tally = (items, fn) => { const m = {}; for (const it of items) m[fn(it)] = (m[fn(it)] ?? 0) + 1; return m; };
@@ -167,6 +186,8 @@ export function buildDistrict(manifest, layers, options = {}) {
       byCategory: Object.fromEntries(CATEGORIES.map((c) => [c, buildings.filter((b) => b.category === c).length])),
       byCategoryInsideSector: Object.fromEntries(CATEGORIES.map((c) => [c, buildings.filter((b) => b.category === c && b.inSector).length])),
       byHeightStatus: { "source-height": 0, "source-levels": 0, estimated: 0, ...tally(buildings, (b) => b.heightStatus) },
+      byCategoryStatus: { source: 0, inferred: 0, none: 0, ...tally(buildings, (b) => b.categoryStatus) },
+      byContext: tally(buildings, (b) => b.context.landuse ?? "none"),
       skippedOpenOutline: skipped.openOutline,
       /** Region-wide: unclosed building ways never reach the layers, so they cannot be placed in a district. */
       unclosedWaysInRegion: manifest.issues?.unclosedBuildings?.count ?? null,
@@ -189,7 +210,8 @@ export function buildDistrict(manifest, layers, options = {}) {
     projection: manifest.projection, bounds: rect, buffer,
     notes: {
       geometry: "Positions and outlines of buildings, roads, areas, barriers, rail and points come from OpenStreetMap.",
-      heights: "heightStatus 'estimated' is a category default, not a measurement. 'source-levels' multiplies mapped levels by an assumed storey height.",
+      categories: "categoryStatus 'source' comes from the building's own tags; 'inferred' from a point of interest inside the footprint or an education land-use area around it (the rule is in categoryRule); 'none' means the use is unknown and the building is a generic reconstruction. context.landuse is surroundings only and never decides a category.",
+      heights: "heightStatus 'estimated' is a category default or, for buildings of unknown use, a generic low-rise guess picked by id; never a measurement. 'source-levels' multiplies mapped levels by an assumed storey height.",
       widths: "widthStatus 'estimated' is a default for the road class.",
       estimatedHeights: heights,
     },
@@ -252,6 +274,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.log(`  by category: ${JSON.stringify(s.buildings.byCategory)}`);
     console.log(`  inside sector by category: ${JSON.stringify(s.buildings.byCategoryInsideSector)}`);
     console.log(`  height: ${JSON.stringify(s.buildings.byHeightStatus)}`);
+    console.log(`  category evidence: ${JSON.stringify(s.buildings.byCategoryStatus)}; surroundings: ${JSON.stringify(s.buildings.byContext)}`);
     if (s.buildings.unclosedWaysInRegion) console.log(`  ${s.buildings.unclosedWaysInRegion} unclosed building ways in the whole region were not exported by build-layers and are not built`);
     if (s.buildings.skippedOpenOutline.length) console.log(`  not built (incomplete outline): ${s.buildings.skippedOpenOutline.join(", ")}`);
     console.log(`Roads: ${s.roads.osmWays} OSM ways in ${s.roads.pieces} pieces; carriageway ${s.roads.carriagewayKm} km in ${s.roads.carriagewayPieces} pieces; paths ${s.roads.pathPieces}; not-built skipped ${s.roads.notBuiltSkipped}`);

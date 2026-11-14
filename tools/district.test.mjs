@@ -131,3 +131,86 @@ test("the spawn point is on a road, inside the sector and clear of buildings", (
   assert.ok(Math.hypot(moved.x - s.x, moved.z - s.z) > 8);
   assert.throws(() => findSpawn([], d.buildings, d.bounds, () => true, [0, 0]), DistrictError);
 });
+
+// ---- evidence from surroundings (M004)
+test("a category is inferred only from a point of interest inside the footprint or an education area around it", async () => {
+  const { inferCategory, poiCategory } = await import("./district/classify.mjs");
+  assert.deepEqual(poiCategory({ amenity: "bank", name: "A Bank" }), { category: "commercial", tag: "amenity=bank" });
+  assert.deepEqual(poiCategory({ shop: "bakery" }), { category: "commercial", tag: "shop=bakery" });
+  assert.deepEqual(poiCategory({ amenity: "hospital" }), { category: "healthcare", tag: "amenity=hospital" });
+  assert.deepEqual(poiCategory({ amenity: "school" }), { category: "institutional", tag: "amenity=school" });
+  assert.equal(poiCategory({ name: "Somewhere" }), null, "a name alone states no use");
+  assert.equal(poiCategory({ amenity: "bench" }), null);
+  assert.equal(poiCategory({ place: "square", name: "A Chowk" }), null);
+
+  const bank = inferCategory([{ id: "node/1", tags: { amenity: "bank" } }], []);
+  assert.equal(bank.category, "commercial");
+  assert.match(bank.rule, /^inferred: point of interest node\/1 \(amenity=bank\) lies inside the footprint$/);
+  assert.deepEqual(bank.evidence, ["node/1"]);
+  assert.equal(inferCategory([{ id: "node/1", tags: { amenity: "bank" } }, { id: "node/2", tags: { amenity: "clinic" } }], []), null, "conflicting uses: nothing is inferred");
+  const school = inferCategory([], [{ id: "way/9", tags: { landuse: "school" } }]);
+  assert.equal(school.category, "institutional");
+  assert.match(school.rule, /^inferred: centre lies inside landuse=school area way\/9$/);
+  // Residential land use is context and never a category; neither is an unnamed, unrecognised point.
+  assert.equal(inferCategory([], [{ id: "way/8", tags: { landuse: "residential" } }]), null);
+  assert.equal(inferCategory([{ id: "node/3", tags: { name: "Somewhere" } }], [{ id: "way/8", tags: { landuse: "residential" } }]), null);
+});
+
+test("buildings of unknown use get a labelled generic height that depends on the id, never a category", async () => {
+  const { genericHeight, GENERIC_HEIGHT_BANDS } = await import("./district/classify.mjs");
+  for (const area of [45, 120, 400, 900, 5000]) {
+    const band = GENERIC_HEIGHT_BANDS.find((b) => area < b.below);
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      const h = genericHeight(`way/${i}`, area);
+      assert.equal(h.heightStatus, "estimated");
+      assert.equal(h.levels, null, "no floor count is invented");
+      assert.match(h.heightBasis, /generic low-rise estimate.*not measured/);
+      assert.ok(band.heights.includes(h.height));
+      assert.deepEqual(genericHeight(`way/${i}`, area), h, "the same id always gives the same height");
+      seen.add(h.height);
+    }
+    assert.equal(seen.size, new Set(band.heights).size, "heights vary between buildings");
+  }
+  assert.equal(genericHeight("way/1", 12).height, ESTIMATED_HEIGHTS.smallFootprintHeight);
+});
+
+test("the district records category status, context and evidence for every building", () => {
+  const { district } = build();
+  const residentialContext = district.buildings.filter((b) => b.context.landuse === "residential");
+  assert.ok(residentialContext.length > 100);
+  for (const b of district.buildings) {
+    assert.ok(["source", "inferred", "none"].includes(b.categoryStatus));
+    assert.equal(b.categoryStatus === "none", b.category === "unclassified");
+    assert.ok(Array.isArray(b.evidence));
+    if (b.categoryStatus === "inferred") assert.match(b.categoryRule, /^inferred: /);
+    if (b.category === "unclassified" && b.heightStatus === "estimated") assert.match(b.heightBasis, /generic low-rise estimate|footprint under/);
+  }
+  // Standing in a residential area does not classify a building: the unknown ones stay unknown.
+  const unknown = residentialContext.filter((b) => b.tags.building === "yes" && !b.tags.amenity && !b.tags.shop);
+  assert.ok(unknown.length > 20);
+  assert.ok(unknown.every((b) => b.category === "unclassified" || b.categoryStatus === "inferred"));
+  assert.ok(unknown.filter((b) => b.category === "unclassified").length > 20);
+  const s = district.stats.buildings.byCategoryStatus;
+  assert.equal(s.source + s.inferred + s.none, district.buildings.length);
+  // Footprints and source heights are untouched by the evidence pass.
+  const plain = buildDistrict(build().manifest, build().layers, { builtAt: "t" });
+  assert.deepEqual(plain.buildings.map((b) => b.polygons), district.buildings.map((b) => b.polygons));
+  for (const b of district.buildings) if (b.heightStatus !== "estimated") assert.ok(/^(height|building:levels)=/.test(b.heightBasis));
+});
+
+test("a building of unknown use with a shop point inside it is inferred commercial, with the rule recorded", () => {
+  const { manifest, layers } = convert(syntheticExtract(), {});
+  const target = layers.buildings.find((b) => b.geometry.type === "polygons" && b.tags.building === "yes" && !b.tags.amenity && !b.tags.shop && b.derived?.centre);
+  assert.ok(target, "the synthetic extract has a plain building");
+  const pt = target.derived.centre;
+  layers.pois.push({ id: "node/999001", osm: { type: "node", id: 999001 }, tags: { shop: "bakery", name: "Test Bakery" }, geometry: { type: "point", point: pt }, source: { name: "Test Bakery", kind: "bakery" } });
+  const district = buildDistrict(manifest, layers, { builtAt: "t" });
+  const b = district.buildings.find((x) => x.id === target.id);
+  if (b.evidence.length) {
+    assert.equal(b.category, "commercial");
+    assert.equal(b.categoryStatus, "inferred");
+    assert.ok(b.evidence.includes("node/999001"));
+    assert.equal(b.tags.building, "yes", "the source tags are not rewritten");
+  } else assert.fail(`the point at ${pt} was not found inside ${target.id}`);
+});

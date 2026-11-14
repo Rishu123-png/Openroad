@@ -1,8 +1,9 @@
 import { SpotLight } from "@babylonjs/core/Lights/spotLight";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { InputAction } from "../../input/InputActions";
 import { ChaseCamera } from "../camera/ChaseCamera";
 import { createDistrictWorld, type DistrictWorld } from "../district/createDistrictWorld";
+import { LABEL_RULES, type LabelKind } from "../district/labels";
 import { spawnProblem } from "../district/spawn";
 import type { DistrictData } from "../district/types";
 import { createDaylight, DAYLIGHT, type Daylight } from "../lighting/createDaylight";
@@ -41,6 +42,18 @@ export interface DistrictGameOptions extends GameOptions {
   trafficCount?: number;
   /** Called when the garage opens or closes, or its vehicle changes. */
   onGarage?: (state: GarageState) => void;
+  /** Called after every frame with the mapped names in view, nearest first. */
+  onLabels?: (labels: readonly ScreenLabel[]) => void;
+}
+
+/** A mapped name and where it falls on screen: x and y from 0 (left, top) to 1. */
+export interface ScreenLabel {
+  text: string;
+  kind: LabelKind;
+  x: number;
+  y: number;
+  /** Metres from the camera. */
+  distance: number;
 }
 
 export interface GarageState {
@@ -77,6 +90,8 @@ export class DistrictGame extends GameBase {
   declare private headlights: SpotLight[];
   declare private headlightsOn: boolean;
   declare private ambientOcclusion: { dispose(): void } | null;
+  declare private labelPoint: Vector3;
+  declare private labelScreen: Vector3;
 
   constructor(options: DistrictGameOptions) {
     super(options);
@@ -96,6 +111,8 @@ export class DistrictGame extends GameBase {
     this.headlights = [];
     this.headlightsOn = false;
     this.ambientOcclusion = null;
+    this.labelPoint = new Vector3();
+    this.labelScreen = new Vector3();
     self.district = district;
     self.daylight = createDaylight(this.scene);
     self.world = createDistrictWorld(this.scene, district);
@@ -104,6 +121,11 @@ export class DistrictGame extends GameBase {
     self.camera = new ChaseCamera(this.scene);
     const { obstacles, buildingIndex } = this.world;
     this.camera.blocked = (x, z) => obstacles.near(x, z, 0.45) || buildingIndex.at(x, z) !== null;
+
+    if (this.opts.onLabels) {
+      const observer = this.scene.onAfterRenderObservable.add(() => this.opts.onLabels?.(this.visibleLabels()));
+      this.cleanups.push(() => void this.scene.onAfterRenderObservable.remove(observer));
+    }
 
     self.traffic = new TrafficModel(district, buildingIndex);
     this.trafficView = new TrafficView(this.traffic, this.world.cars, RIDE_HEIGHT);
@@ -309,6 +331,33 @@ export class DistrictGame extends GameBase {
   protected override extraStats(): Partial<GameStats> {
     const view = this.world.debug.view;
     return { speedKmh: this.vehicle.speedKmh, onRoad: this.vehicle.onRoad, debugView: view.name, debugLegend: view.legend, traffic: this.traffic.activeCount };
+  }
+
+  /**
+   * The mapped names within sight of the camera and in front of it, nearest
+   * first. Names and positions are the map's; nothing is added here.
+   */
+  visibleLabels(): ScreenLabel[] {
+    const camera = this.camera.camera;
+    const eye = camera.globalPosition;
+    const width = this.engine.getRenderWidth(), height = this.engine.getRenderHeight();
+    const viewport = camera.viewport.toGlobal(width, height);
+    const transform = this.scene.getTransformMatrix();
+    const forward = camera.getDirection(Vector3.Forward());
+    const out: ScreenLabel[] = [];
+    for (const label of this.world.labels) {
+      const dx = label.x - eye.x, dy = label.y - eye.y, dz = label.z - eye.z;
+      const distance = Math.hypot(dx, dy, dz);
+      if (distance > LABEL_RULES.visibleWithin || dx * forward.x + dy * forward.y + dz * forward.z <= 1) continue;
+      this.labelPoint.set(label.x, label.y, label.z);
+      Vector3.ProjectToRef(this.labelPoint, Matrix.IdentityReadOnly, transform, viewport, this.labelScreen);
+      const x = this.labelScreen.x / width, y = this.labelScreen.y / height;
+      if (!(x > 0.02 && x < 0.98 && y > 0.04 && y < 0.9)) continue;
+      out.push({ text: label.text, kind: label.kind, x, y, distance });
+    }
+    out.sort((a, b) => a.distance - b.distance);
+    if (out.length > LABEL_RULES.limit) out.length = LABEL_RULES.limit;
+    return out;
   }
 
   protected disposeWorld(): void {

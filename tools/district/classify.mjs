@@ -89,3 +89,70 @@ export function buildingHeight(id, tags, category, footprintArea, config = ESTIM
   const spread = 1 + (idNoise(id) * 2 - 1) * config.variation;
   return { height: Math.round(base * spread * 10) / 10, heightStatus: "estimated", heightBasis: `default for ${category} (${base} m, varied by up to ${Math.round(config.variation * 100)}%)`, levels: null };
 }
+
+/**
+ * EVIDENCE FROM SURROUNDINGS. Used only for buildings whose own tags say
+ * nothing (category "unclassified"). Two rules, both recorded on the building:
+ *
+ *   1. A mapped point of interest lies inside the footprint and names a use.
+ *      If several lie inside and disagree, nothing is inferred.
+ *   2. The building's centre lies inside a mapped education land-use area.
+ *
+ * A residential land-use area is NOT evidence of what a building is: it is
+ * kept as context only, and the building stays unclassified.
+ * Footprint size is never used to decide a category.
+ */
+const POI_COMMERCIAL_AMENITY = new Set(["bank", "restaurant", "fast_food", "cafe", "pharmacy", "bar", "pub", "food_court", "marketplace", "fuel", "cinema", "bureau_de_change"]);
+const POI_INSTITUTIONAL_AMENITY = new Set(["school", "college", "university", "kindergarten", "place_of_worship", "community_centre", "library", "police", "post_office", "townhall", "fire_station", "courthouse"]);
+const POI_HEALTH_AMENITY = new Set(["hospital", "clinic", "doctors", "dentist"]);
+const EDUCATION_LANDUSE = new Set(["school", "college", "university", "education"]);
+
+/** The use a point of interest states, or null when its tags state none we recognise. */
+export function poiCategory(tags) {
+  if (tags.healthcare || POI_HEALTH_AMENITY.has(tags.amenity)) return { category: "healthcare", tag: tags.healthcare ? `healthcare=${tags.healthcare}` : `amenity=${tags.amenity}` };
+  if (POI_INSTITUTIONAL_AMENITY.has(tags.amenity)) return { category: "institutional", tag: `amenity=${tags.amenity}` };
+  if (tags.shop) return { category: "commercial", tag: `shop=${tags.shop}` };
+  if (tags.office) return { category: "commercial", tag: `office=${tags.office}` };
+  if (POI_COMMERCIAL_AMENITY.has(tags.amenity)) return { category: "commercial", tag: `amenity=${tags.amenity}` };
+  return null;
+}
+
+/**
+ * @param poisInside  points of interest inside the footprint: [{ id, tags }]
+ * @param areasAround mapped areas containing the building's centre: [{ id, tags }]
+ * @returns { category, rule, evidence } or null when nothing can be inferred.
+ */
+export function inferCategory(poisInside, areasAround) {
+  const stated = poisInside.map((p) => ({ id: p.id, ...poiCategory(p.tags) })).filter((p) => p.category);
+  const kinds = new Set(stated.map((p) => p.category));
+  if (kinds.size === 1) {
+    const p = stated[0];
+    return { category: p.category, rule: `inferred: point of interest ${p.id} (${p.tag}) lies inside the footprint`, evidence: stated.map((s) => s.id) };
+  }
+  if (kinds.size > 1) return null; // conflicting uses: leave it unclassified
+  const school = areasAround.find((a) => EDUCATION_LANDUSE.has(a.tags.landuse) || ["school", "college", "university"].includes(a.tags.amenity));
+  if (school) return { category: "institutional", rule: `inferred: centre lies inside ${school.tags.landuse ? `landuse=${school.tags.landuse}` : `amenity=${school.tags.amenity}`} area ${school.id}`, evidence: [school.id] };
+  return null;
+}
+
+/**
+ * Height bands for buildings of unknown use. Each is a low-rise guess in
+ * metres, picked by a hash of the id so that it never changes between builds.
+ * The footprint band only narrows the guess (a 40 m2 footprint is not given
+ * 13 m); it does not decide what the building is. NOT a measurement and not a
+ * mapped floor count.
+ */
+export const GENERIC_HEIGHT_BANDS = [
+  { below: 80, heights: [3.4, 3.4, 6.6] },
+  { below: 250, heights: [6.6, 6.6, 6.6, 9.8, 9.8, 3.4] },
+  { below: 600, heights: [6.6, 9.8, 9.8, 13] },
+  { below: 1500, heights: [6.6, 9.8, 13] },
+  { below: Infinity, heights: [6.6, 9.8] },
+];
+
+export function genericHeight(id, footprintArea, config = ESTIMATED_HEIGHTS) {
+  if (footprintArea < config.smallFootprintArea) return { height: config.smallFootprintHeight, heightStatus: "estimated", heightBasis: `footprint under ${config.smallFootprintArea} m2`, levels: null };
+  const band = GENERIC_HEIGHT_BANDS.find((b) => footprintArea < b.below);
+  const height = band.heights[Math.floor(idNoise(`${id}h`) * band.heights.length) % band.heights.length];
+  return { height, heightStatus: "estimated", heightBasis: `generic low-rise estimate for a footprint ${band.below === Infinity ? "of 1500 m2 or more" : `under ${band.below} m2`}, picked by id from ${[...new Set(band.heights)].join("/")} m; not measured`, levels: null };
+}

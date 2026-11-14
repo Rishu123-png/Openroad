@@ -241,6 +241,18 @@ export function residentialFacade(size = 512): PixelImage {
  * balconies, curtains or shop fronts. Used for buildings whose use is unknown.
  */
 export function genericFacade(size = 512): PixelImage {
+  // Four plain variants stacked in one texture, so that buildings of unknown use differ without a material each.
+  // A wall picks one by starting its texture rows at a multiple of the tile height (see GENERIC_FACADE_VARIANTS).
+  const parts = [genericFacadeA(size), genericFacadeB(size), genericFacadeC(size, 701, 0.22), genericFacadeC(size, 811, 0)];
+  const data = new Uint8Array(size * size * 4 * parts.length);
+  parts.forEach((part, i) => data.set(part.data, i * size * size * 4));
+  return { width: size, height: size * parts.length, data };
+}
+
+/** Number of variants stacked in `genericFacade`. */
+export const GENERIC_FACADE_VARIANTS = 4;
+
+function genericFacadeA(size: number): PixelImage {
   return facade(size, 501, (u, v, random, x, y) => {
     const stain = 0.92 + fbm(x / 45, y / 80, 503, 3) * 0.11;
     const wall: Rgb = [236 * stain, 234 * stain, 228 * stain];
@@ -253,6 +265,47 @@ export function genericFacade(size = 512): PixelImage {
     }
     if (v >= 0.68 && v < 0.715 && u > 0.27 && u < 0.73) return [196, 194, 188]; // sill
     if (v > 0.2 && v <= 0.26 && u > 0.27 && u < 0.73) return [wall[0] * 0.9, wall[1] * 0.9, wall[2] * 0.9]; // shade over the window
+    return wall;
+  });
+}
+
+/**
+ * Second plain wall for buildings of unknown use: one wide, low window per
+ * bay behind a simple grille, under a projecting shade. Still nothing that
+ * states a use.
+ */
+function genericFacadeB(size: number): PixelImage {
+  return facade(size, 601, (u, v, random, x, y) => {
+    const stain = 0.91 + fbm(x / 50, y / 70, 607, 3) * 0.12;
+    const wall: Rgb = [234 * stain, 232 * stain, 226 * stain];
+    if (v > 0.955) return [wall[0] * 0.8, wall[1] * 0.8, wall[2] * 0.8]; // floor line
+    const left = 0.16, right = 0.84, top = 0.3, bottom = 0.64;
+    if (v > 0.22 && v <= top && u > left - 0.05 && u < right + 0.05) return [wall[0] * 0.82, wall[1] * 0.82, wall[2] * 0.82]; // shade
+    if (u > left && u < right && v > top && v < bottom) {
+      if (Math.min(u - left, right - u) < 0.02 || Math.min(v - top, bottom - v) < 0.03) return [128, 124, 118];
+      const pane = ((u - left) / (right - left)) * 3;
+      if (pane % 1 < 0.04) return [128, 124, 118];
+      if (Math.floor(((v - top) / (bottom - top)) * 5) !== Math.floor(((v - top) / (bottom - top)) * 5 - 0.12)) return [96, 96, 98]; // grille bar
+      return glass((v - top) / (bottom - top), 0.65 + random(3) * 0.35, [58, 72, 84]);
+    }
+    return wall;
+  });
+}
+
+/** Third plain wall for buildings of unknown use: a tall, narrow window per bay with a small vent above; some bays blank. */
+function genericFacadeC(size: number, seed: number, blank: number): PixelImage {
+  return facade(size, seed, (u, v, random, x, y) => {
+    const stain = 0.92 + fbm(x / 38, y / 95, 709, 3) * 0.11;
+    const wall: Rgb = [237 * stain, 235 * stain, 229 * stain];
+    if (v > 0.95 || v < 0.03) return [wall[0] * 0.86, wall[1] * 0.86, wall[2] * 0.86]; // slab band
+    if (random(5) < blank) return wall; // blank bay
+    const left = 0.36, right = 0.64, top = 0.3, bottom = 0.8;
+    if (u > left && u < right && v > 0.14 && v < 0.22) return Math.floor(u * 60) % 2 === 0 ? [92, 92, 94] : [150, 148, 144]; // vent
+    if (u > left && u < right && v > top && v < bottom) {
+      if (Math.min(u - left, right - u) < 0.022 || Math.min(v - top, bottom - v) < 0.025) return [160, 156, 148];
+      if (Math.abs(v - 0.55) < 0.012) return [160, 156, 148];
+      return glass((v - top) / (bottom - top), 0.7 + random(3) * 0.35, [66, 82, 96]);
+    }
     return wall;
   });
 }

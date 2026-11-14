@@ -12,11 +12,16 @@ import { broadTree, columnarTree } from "../world/vegetation";
 import { CarFactory, type CarVisual } from "../vehicle/models/CarVisual";
 import { TRAFFIC_CARS, TRAFFIC_PAINTS } from "../vehicle/models/carSpecs";
 import { BuildingIndex } from "./BuildingIndex";
+import { addBuildingDetails, planAppearance } from "./buildingAppearance";
 import { BUILDING_LAYERS, dressBuilding, usableHeight } from "./buildingGeometry";
-import { addJunctionMarkings, addLaneMarkings, addSpeedBreaker } from "./roadMarkings";
+import { GATE_RULES, isGate, planGates, type GatePlan } from "./gates";
+import { collectLabels, type NameLabel } from "./labels";
+import { buildingProvenance, isUnpaved, roadKey, roadProvenance, type WorldProvenance } from "./provenance";
+import { planVerges, VERGE_RULES, type VergeRun } from "./streetDetail";
+import { addJunctionMarkings, addLaneMarkings, addSpeedBreaker, MARKING_RULES, paintedLanes } from "./roadMarkings";
 import { DebugViews, type DebugTints, type TintRange } from "./DebugViews";
 import { placeDecorations, type Decoration } from "./decorations";
-import { addDisc, addStrip } from "./roadGeometry";
+import { addDisc, addStrip, offsetLine } from "./roadGeometry";
 import { SegmentGrid } from "./SegmentGrid";
 import type { BuildingCategory, DistrictData, HeightStatus, WidthStatus } from "./types";
 
@@ -37,32 +42,19 @@ export const DISTRICT_ASSUMPTIONS = {
   gateGap: 2.5,
   /** Width of a footpath drawn beside a road tagged sidewalk=both/left/right/yes. */
   sidewalkWidth: 1.8,
-  /** Deck height of rail tagged as a bridge. OSM gives no height. */
+  /** Deck height of rail tagged as a bridge. OSM gives no height: this is an ESTIMATE, not a measurement. */
   viaductHeight: 9,
   railWidth: 3.2,
+  /** Generated form of the viaduct on the mapped line: deck, side walls, rails, pier heads. */
+  viaduct: { deckWidth: 4.4, deckDepth: 0.9, wallHeight: 1, gauge: 1.435, pierHead: 3.4 },
+  /** Generic canopy drawn over the mapped line at a mapped station point. Its size and form are not from the map. */
+  station: { length: 70, width: 11, roofAbove: 5.2, within: 60 },
   /** Spacing of the generated piers under elevated rail. */
   pierSpacing: 30,
   /** Paved margin drawn beside a carriageway: wider on the main roads. */
   shoulder: { main: 1.2, minor: 0.5 },
   mainClasses: ["trunk", "primary", "secondary", "tertiary"] as readonly string[],
 } as const;
-
-/**
- * Wall tints. Residential and unknown buildings draw from a set of common
- * plaster colours; the rest have one muted colour per category. They make
- * streets varied; they are not the colours of the real buildings.
- */
-const PLASTER_TINTS: Color[] = [srgb(238, 230, 212), srgb(228, 216, 192), srgb(242, 238, 230), srgb(224, 208, 188), srgb(216, 222, 214), srgb(234, 216, 202), srgb(212, 216, 224), srgb(232, 224, 196)];
-const WALL: Record<BuildingCategory, Color | null> = {
-  house: null,
-  apartments: null,
-  commercial: srgb(214, 216, 220),
-  institutional: srgb(228, 212, 190),
-  industrial: srgb(186, 190, 194),
-  healthcare: srgb(236, 236, 232),
-  other: srgb(198, 192, 182),
-  unclassified: null,
-};
 
 const DEBUG_CATEGORY: Record<BuildingCategory, Color> = {
   house: [0.9, 0.75, 0.1],
@@ -90,6 +82,14 @@ function idNoise(id: string): number {
   return ((h >>> 0) % 1000) / 1000;
 }
 
+/** What the generated paint on a road rests on. Paint is never mapped. */
+function markingRule(road: { kind: string; class: string; width: number; oneway: boolean; tags?: Record<string, string> }): string {
+  const M = MARKING_RULES;
+  if (road.kind !== "road" || !M.classes.includes(road.class as never)) return `none: ${road.kind === "road" ? road.class : "path"} roads are not marked`;
+  if (road.width < M.minWidth) return `none: narrower than ${M.minWidth} m`;
+  return `${road.oneway ? "edge lines only" : "centre line"} by class and width${road.tags?.lanes ? `; lane lines from lanes=${road.tags.lanes}` : "; no lane lines, because the lane count is not mapped"}`;
+}
+
 export interface DistrictWorld {
   materials: MaterialLibrary;
   shadowCasters: AbstractMesh[];
@@ -104,6 +104,14 @@ export interface DistrictWorld {
   buildingIndex: BuildingIndex;
   decorations: Decoration[];
   debug: DebugViews;
+  /** Where every rendered building, road and added feature comes from. */
+  provenance: WorldProvenance;
+  /** Names the map gives, at their mapped positions. */
+  labels: NameLabel[];
+  /** One entry per mapped gate point. */
+  gates: GatePlan[];
+  /** Generated kerbed verges. */
+  verges: VergeRun[];
 }
 
 interface Batch {
@@ -145,6 +153,7 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
   };
 
   const b = district.bounds;
+  const provenance: WorldProvenance = { buildings: new Map(), roads: new Map(), features: [] };
   const obstacles = new SegmentGrid(32, 4);
   const roadSurfaces = new SegmentGrid(32, 4);
   const carriageways = new SegmentGrid(32, 4);
@@ -195,11 +204,18 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     }
     // Subtle variation between roads: resurfaced at different times.
     const shade = (road.class === "service" ? 1.12 : 1) * (0.92 + idNoise(road.id) * 0.14);
-    draw(at("asphalt", first[0], first[1]), [DARK, DARK, DEBUG_WIDTH[road.widthStatus]], (g) => addStrip(g, road.points, half, -half, Y.road, [shade, shade, shade]));
+    // Only a mapped surface tag makes a road unsealed: it is then drawn as bare earth with no paved margin.
+    const unpaved = isUnpaved(road);
+    const tone: Color = unpaved ? [2.5 * shade, 2.05 * shade, 1.5 * shade] : [shade, shade, shade];
+    draw(at("asphalt", first[0], first[1]), [DARK, DARK, DEBUG_WIDTH[road.widthStatus]], (g) => addStrip(g, road.points, half, -half, Y.road, tone));
+    add("roads");
+    if (unpaved) {
+      add("unpavedRoads");
+      continue;
+    }
     // Road edge: a paved margin under the asphalt. Generated; its width is a rule, not data.
     const margin = A.mainClasses.includes(road.class) ? A.shoulder.main : A.shoulder.minor;
     draw(at("pavers", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => addStrip(g, road.points, half + margin, -half - margin, Y.shoulder, [0.66, 0.63, 0.6]));
-    add("roads");
     // Footpaths only where the road itself is tagged as having them.
     const w = DISTRICT_ASSUMPTIONS.sidewalkWidth;
     const left = road.sidewalk === "both" || road.sidewalk === "left" || road.sidewalk === "yes";
@@ -220,22 +236,24 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
   // ---- generated road markings (roadMarkings.ts): by rule from class and lane count, never from mapped paint
   for (const road of district.roads) {
     const first = road.points[0]!;
-    draw(at("roadPaint", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => add("generatedLaneLines", addLaneMarkings(g, road, Y.paint, junctionZones)));
+    let pieces = 0;
+    draw(at("roadPaint", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => add("generatedLaneLines", (pieces = addLaneMarkings(g, paintedLanes(road), Y.paint, junctionZones))));
+    provenance.roads.set(roadKey(road), roadProvenance(road, markingRule(road), pieces));
   }
   for (const j of district.junctions) {
     draw(at("roadPaint", j.point[0], j.point[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
       const [stops, crossings] = addJunctionMarkings(g, j, district.roads, Y.paint);
       add("generatedStopLines", stops);
       add("generatedCrossings", crossings);
+      if (stops + crossings > 0) provenance.features.push({ kind: "junction-markings", source: null, position: "decorative", form: "decorative", rule: `stop lines (${stops}) and zebra crossings (${crossings}) by rule at a junction of ${j.arms} arms; no crossing is mapped`, x: j.point[0], z: j.point[1] });
     });
   }
 
   // ---- buildings: one extrusion per mapped footprint
   for (const building of district.buildings) {
-    const base = WALL[building.category] ?? PLASTER_TINTS[Math.floor(idNoise(`${building.id}c`) * PLASTER_TINTS.length)]!;
-    const k = 0.95 + idNoise(building.id) * 0.08; // slight variation so neighbours differ
-    const wall: Color = [base[0] * k, base[1] * k, base[2] * k];
-    const roof: Color = [0.62 * k, 0.6 * k, 0.57 * k];
+    // Colour, wall pattern and roof objects are generated from the building's id: the same on every load.
+    const look = planAppearance(building);
+    const { wall, roof } = look;
     const tints: DebugTints = [DEBUG_CATEGORY[building.category], DEBUG_HEIGHT[building.heightStatus], OSM_BLUE];
     const [cx, cz] = building.centre;
     // Walls and roof are the mapped footprint; the parapet, door and balconies are generated and are tinted as such.
@@ -246,7 +264,7 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
       if (o && o.batch.buffer.vertexCount > o.start) o.batch.ranges.push({ start: o.start, count: o.batch.buffer.vertexCount - o.start, tints: o.generated ? generatedTints : tints });
       open.delete(layer);
     };
-    const balconies = dressBuilding((layer, generated = false) => {
+    const into = (layer: MaterialKey, generated = false): GeometryBuffer => {
       const batch = at(layer, cx, cz);
       const o = open.get(layer);
       if (!o || o.generated !== generated) {
@@ -254,9 +272,16 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
         open.set(layer, { batch, start: batch.buffer.vertexCount, generated });
       }
       return batch.buffer;
-    }, building, wall, roof);
+    };
+    const balconies = dressBuilding(into, building, wall, roof, look.wallRow);
+    const details = addBuildingDetails(into, building, look);
     for (const layer of BUILDING_LAYERS) close(layer);
     add("generatedBalconies", balconies);
+    add("generatedFacadeBands", details.bands);
+    add("generatedRoofTanks", details.tanks);
+    add("generatedStairHeads", details.stairHeads);
+    if (look.genericReconstruction) add("genericReconstructions");
+    provenance.buildings.set(building.id, buildingProvenance(building, look));
     for (const polygon of building.polygons) {
       for (const ring of [polygon.outer, ...polygon.holes]) {
         for (let i = 1; i < ring.length; i++) obstacles.add(ring[i - 1]![0], ring[i - 1]![1], ring[i]![0], ring[i]![1], 0);
@@ -300,21 +325,122 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
       }
     }
   }
+  const inBounds = (x: number, z: number, m = 1): boolean => x > b.minX + m && x < b.maxX - m && z > b.minZ + m && z < b.maxZ - m;
+  // Gates: the mapped point decides where; the model is generic and stands open, clear of the carriageway.
+  const gatePlans = planGates(district, (x, z) => inBounds(x, z) && !roadSurfaces.near(x, z, 0.3) && buildingIndex.at(x, z) === null && !obstacles.near(x, z, 0.3));
+  const gatePlanById = new Map(gatePlans.map((plan) => [plan.id, plan]));
   for (const gate of gates) {
-    draw(at("metal", gate.point[0], gate.point[1]), mapped(), (g) => g.box(gate.point[0], 0, gate.point[1], 0.3, 1.6, 0.3, { color: srgb(90, 92, 96) }));
+    const plan = isGate(gate) ? gatePlanById.get(gate.id) : undefined;
     add("mappedGates");
+    if (!plan || plan.pillars.length === 0) {
+      if (carriageways.near(gate.point[0], gate.point[1], 0)) {
+        // A post in the middle of a mapped road would stand in the traffic: the point is kept in the records and not drawn.
+        add("barrierPointsOnRoadNotDrawn");
+        provenance.features.push({ kind: "gate", source: gate.id, position: "source", form: "decorative", rule: `mapped ${gate.kind ?? "barrier"} point on a carriageway: recorded, not drawn`, x: gate.point[0], z: gate.point[1] });
+        continue;
+      }
+      draw(at("metal", gate.point[0], gate.point[1]), mapped(), (g) => g.box(gate.point[0], 0, gate.point[1], 0.3, 1.6, 0.3, { color: srgb(90, 92, 96) }));
+      provenance.features.push({ kind: "gate", source: gate.id, position: "source", form: "decorative", rule: "post at the mapped point (not on a mapped road)", x: gate.point[0], z: gate.point[1] });
+      continue;
+    }
+    const G = GATE_RULES;
+    const yaw = Math.atan2(plan.dx, plan.dz) - Math.PI / 2;
+    const lift = plan.kind === "lift_gate";
+    for (const pillar of plan.pillars) {
+      draw(at("plaster", pillar.x, pillar.z), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+        if (lift) g.box(pillar.x, 0, pillar.z, 0.4, 1.1, 0.4, { yaw, color: srgb(214, 190, 60) });
+        else {
+          g.box(pillar.x, 0, pillar.z, G.pillarSize, G.pillarHeight, G.pillarSize, { yaw, color: srgb(206, 198, 184) });
+          g.box(pillar.x, G.pillarHeight, pillar.z, G.pillarSize + 0.16, 0.14, G.pillarSize + 0.16, { yaw, color: srgb(150, 144, 134) });
+        }
+      });
+      obstacles.add(pillar.x, pillar.z, pillar.x, pillar.z, G.pillarSize / 2);
+      draw(at("metal", pillar.x, pillar.z), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+        if (lift) {
+          // The boom stands raised beside its post: the road stays open.
+          if (pillar.side === 1) g.box(pillar.x + plan.dx * 0.3, 1.0, pillar.z + plan.dz * 0.3, 0.1, Math.min(plan.half * 2, 4.5), 0.1, { yaw, color: srgb(230, 230, 226) });
+          return;
+        }
+        // The leaf is swung back along the road, outside the carriageway edge.
+        const leaf = Math.min(G.maxLeaf, Math.max(1, plan.half * 0.95));
+        const along = pillar.side * (G.pillarSize / 2 + leaf / 2);
+        const lx = pillar.x + plan.dx * along, lz = pillar.z + plan.dz * along;
+        const ex = pillar.x + plan.dx * along * 2, ez = pillar.z + plan.dz * along * 2;
+        if (roadSurfaces.near(ex, ez, 0.1) || buildingIndex.at(ex, ez) !== null) return;
+        g.box(lx, 0.15, lz, leaf, G.leafHeight, 0.06, { yaw, color: srgb(52, 56, 62) });
+      });
+      add("generatedGatePillars");
+    }
+    add("gatesOnRoads");
+    provenance.features.push({ kind: "gate", source: gate.id, position: "source", form: "decorative", rule: `generic open ${lift ? "lift gate" : "gate"} across mapped road ${plan.road}; ${plan.pillars.length} pillar(s) outside the carriageway`, x: plan.x, z: plan.z });
   }
 
-  // ---- rail: the mapped line; deck height and piers of elevated sections are assumptions
+  // ---- generated kerbed verges beside the through roads (streetDetail.ts)
+  const verges = planVerges(district, (x, z, r) => inBounds(x, z, r + 0.5) && !roadSurfaces.near(x, z, r) && buildingIndex.at(x, z) === null && !obstacles.near(x, z, r));
+  for (const run of verges) {
+    const V = VERGE_RULES;
+    const first = run.points[0]!;
+    draw(at("concrete", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      if (run.side === 1) addStrip(g, run.points, run.inner + V.width, run.inner, V.height, [0.9, 0.89, 0.86]);
+      else addStrip(g, run.points, -run.inner, -run.inner - V.width, V.height, [0.9, 0.89, 0.86]);
+    });
+    draw(at("concrete", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      for (const edge of [run.inner, run.inner + V.width]) {
+        const line = offsetLine(run.points, edge * run.side);
+        for (let i = 1; i < line.length; i++) {
+          const p = line[i - 1]!, q = line[i]!;
+          const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+          if (len < 0.01) continue;
+          const nx = -(q[1] - p[1]) / len, nz = (q[0] - p[0]) / len;
+          g.wall(p[0], p[1], q[0], q[1], 0, V.height, nx, nz, [0.8, 0.79, 0.76]);
+          g.wall(q[0], q[1], p[0], p[1], 0, V.height, -nx, -nz, [0.8, 0.79, 0.76]);
+        }
+      }
+    });
+    add("generatedVerges");
+    provenance.features.push({ kind: "verge", source: run.road, position: "decorative", form: "decorative", rule: `kerbed paved verge beside ${run.road}; no kerb or footpath is mapped`, x: first[0], z: first[1] });
+  }
+
+  // ---- rail: the line is mapped; the deck height is an estimate; side walls, rails, piers and pier heads are generated
+  const W = A.viaduct;
+  const sideWalls = (g: GeometryBuffer, points: ReadonlyArray<readonly [number, number]>, offset: number, y0: number, y1: number, color: Color): void => {
+    const line = offsetLine(points, offset);
+    for (let i = 1; i < line.length; i++) {
+      const p = line[i - 1]!, q = line[i]!;
+      const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (len < 0.01) continue;
+      const nx = -(q[1] - p[1]) / len, nz = (q[0] - p[0]) / len;
+      g.wall(p[0], p[1], q[0], q[1], y0, y1, nx, nz, color);
+      g.wall(q[0], q[1], p[0], p[1], y0, y1, -nx, -nz, color);
+    }
+  };
   for (const line of district.rail.lines) {
     const y = line.elevated ? A.viaductHeight : 0.2;
     const first = line.points[0]!;
+    if (!line.elevated) {
+      draw(at("concrete", first[0], first[1]), mapped(), (g) => addStrip(g, line.points, A.railWidth / 2, -A.railWidth / 2, y, [0.8, 0.8, 0.8]));
+      add("railLines");
+      provenance.features.push({ kind: "rail-line", source: line.id, position: "source", form: "estimated", rule: `mapped line at ground level; bed width ${A.railWidth} m assumed`, x: first[0], z: first[1] });
+      continue;
+    }
+    const hw = W.deckWidth / 2;
     draw(at("concrete", first[0], first[1]), mapped(), (g) => {
-      addStrip(g, line.points, A.railWidth / 2, -A.railWidth / 2, y, [0.8, 0.8, 0.8]);
-      if (line.elevated) addStrip(g, line.points, -A.railWidth / 2, A.railWidth / 2, y - 0.9, [0.6, 0.6, 0.6]);
+      addStrip(g, line.points, hw, -hw, y, [0.8, 0.8, 0.8]);
+      addStrip(g, line.points, -hw, hw, y - W.deckDepth, [0.6, 0.6, 0.6]);
+    });
+    draw(at("concrete", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      for (const side of [1, -1]) {
+        sideWalls(g, line.points, side * hw, y - W.deckDepth, y + W.wallHeight, [0.74, 0.74, 0.73]);
+        sideWalls(g, line.points, side * (hw - 0.2), y, y + W.wallHeight, [0.7, 0.7, 0.69]);
+      }
+      addStrip(g, line.points, hw, hw - 0.2, y + W.wallHeight, [0.78, 0.78, 0.77]);
+      addStrip(g, line.points, -hw + 0.2, -hw, y + W.wallHeight, [0.78, 0.78, 0.77]);
+    });
+    draw(at("metal", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      for (const side of [1, -1]) addStrip(g, line.points, side * (W.gauge / 2) + 0.05, side * (W.gauge / 2) - 0.05, y + 0.1, [0.32, 0.3, 0.29]);
     });
     add("railLines");
-    if (!line.elevated) continue;
+    provenance.features.push({ kind: "viaduct", source: line.id, position: "source", form: "estimated", rule: `mapped elevated line; deck height ${A.viaductHeight} m is an estimate (the map gives none); deck width, side walls and rails are generated`, x: first[0], z: first[1] });
     let next = A.pierSpacing / 2, travelled = 0;
     for (let i = 1; i < line.points.length; i++) {
       const p = line.points[i - 1]!, q = line.points[i]!;
@@ -323,12 +449,84 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
         const t = (next - travelled) / len;
         const x = p[0] + (q[0] - p[0]) * t, z = p[1] + (q[1] - p[1]) * t;
         if (carriageways.near(x, z, 1)) continue;
-        draw(at("concrete", x, z), [DARK, DARK, GENERATED_MAGENTA], (g) => g.cylinder(x, 0, z, y - 0.9, 0.8, 0.8, 8, [0.75, 0.75, 0.75], { cap: false }));
+        const yaw = Math.atan2(q[0] - p[0], q[1] - p[1]);
+        draw(at("concrete", x, z), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+          g.cylinder(x, 0, z, y - W.deckDepth - 0.8, 0.8, 0.8, 8, [0.75, 0.75, 0.75], { cap: false });
+          g.box(x, y - W.deckDepth - 0.8, z, W.pierHead, 0.8, 1.5, { yaw, color: [0.72, 0.72, 0.71], bottom: true });
+        });
         obstacles.add(x, z, x, z, 0.8);
         add("generatedRailPiers");
+        provenance.features.push({ kind: "viaduct-pier", source: line.id, position: "decorative", form: "decorative", rule: `pier every ${A.pierSpacing} m under the mapped line, left out over carriageways; real pier positions are not mapped`, x, z });
       }
       travelled += len;
     }
+  }
+
+  // ---- stations: a generic canopy over the mapped line at each mapped station point
+  const S = A.station;
+  const stationPoints = district.rail.points.filter((p) => p.kind === "station" || p.tags?.railway === "station" || p.tags?.public_transport === "station");
+  const stops = stationPoints.length ? stationPoints : district.rail.points.filter((p) => p.name ?? p.tags?.name);
+  const builtStations: Array<[number, number]> = [];
+  for (const stop of stops) {
+    const [sx, sz] = stop.point;
+    if (builtStations.some(([x, z]) => Math.hypot(x - sx, z - sz) < 150)) continue;
+    let best: number = S.within, hit: { line: (typeof district.rail.lines)[number]; i: number; t: number } | null = null;
+    for (const line of district.rail.lines) {
+      if (!line.elevated) continue;
+      for (let i = 1; i < line.points.length; i++) {
+        const p = line.points[i - 1]!, q = line.points[i]!;
+        const ex = q[0] - p[0], ez = q[1] - p[1];
+        const len2 = ex * ex + ez * ez;
+        if (len2 < 1e-6) continue;
+        const t = Math.max(0, Math.min(1, ((sx - p[0]) * ex + (sz - p[1]) * ez) / len2));
+        const d = Math.hypot(sx - p[0] - t * ex, sz - p[1] - t * ez);
+        if (d < best) [best, hit] = [d, { line, i, t }];
+      }
+    }
+    if (!hit) continue;
+    // The stretch of the mapped line within half the canopy length of the station point.
+    const pts = hit.line.points;
+    const at0: [number, number] = [pts[hit.i - 1]![0] + (pts[hit.i]![0] - pts[hit.i - 1]![0]) * hit.t, pts[hit.i - 1]![1] + (pts[hit.i]![1] - pts[hit.i - 1]![1]) * hit.t];
+    const walk = (from: number, step: 1 | -1): Array<[number, number]> => {
+      const out: Array<[number, number]> = [];
+      let left = S.length / 2, prev = at0;
+      for (let k = from; k >= 0 && k < pts.length && left > 0; k += step) {
+        const q = pts[k]!;
+        const d = Math.hypot(q[0] - prev[0], q[1] - prev[1]);
+        if (d < 1e-6) continue;
+        const f = Math.min(1, left / d);
+        const pt: [number, number] = [prev[0] + (q[0] - prev[0]) * f, prev[1] + (q[1] - prev[1]) * f];
+        out.push(pt);
+        left -= d * f;
+        prev = pt;
+      }
+      return out;
+    };
+    const run = [...walk(hit.i - 1, -1).reverse(), at0, ...walk(hit.i, 1)].filter((p) => inBounds(p[0], p[1], 0));
+    if (run.length < 2) continue;
+    const y = A.viaductHeight, hw = W.deckWidth / 2, half = S.width / 2;
+    draw(at("concrete", at0[0], at0[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      for (const side of [1, -1]) {
+        // Platform beside the deck, and its outer wall up to the roof.
+        if (side === 1) {
+          addStrip(g, run, half, hw, y + 0.9, [0.82, 0.81, 0.78]);
+          addStrip(g, run, hw, half, y - W.deckDepth, [0.6, 0.6, 0.6]);
+        } else {
+          addStrip(g, run, -hw, -half, y + 0.9, [0.82, 0.81, 0.78]);
+          addStrip(g, run, -half, -hw, y - W.deckDepth, [0.6, 0.6, 0.6]);
+        }
+        sideWalls(g, run, side * half, y - W.deckDepth, y + 2, [0.76, 0.77, 0.79]);
+      }
+      addStrip(g, run, half + 0.6, -half - 0.6, y + S.roofAbove, [0.6, 0.63, 0.67]);
+      addStrip(g, run, -half - 0.6, half + 0.6, y + S.roofAbove - 0.25, [0.5, 0.52, 0.55]);
+    });
+    draw(at("metal", at0[0], at0[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      const edges = [offsetLine(run, half - 0.3), offsetLine(run, -half + 0.3)];
+      for (const edge of edges) for (const p of edge) g.box(p[0], y + 0.9, p[1], 0.3, S.roofAbove - 1.15, 0.3, { color: [0.55, 0.57, 0.6], top: false });
+    });
+    builtStations.push([sx, sz]);
+    add("generatedStationCanopies");
+    provenance.features.push({ kind: "station", source: stop.id, position: "source", form: "decorative", rule: `generic ${S.length} m canopy on the mapped line nearest the mapped station point; no station outline is mapped, so its size and form are not real`, x: sx, z: sz });
   }
 
   // ---- mapped point objects with a generic model: the position is mapped, the look is not
@@ -474,5 +672,13 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     debug.addDebugOnly(mesh);
   }
 
-  return { materials, cars, shadowCasters: casters, counts, obstacles, roadSurfaces, buildingIndex, decorations, debug };
+  // ---- provenance of the remaining rendered features
+  for (const area of district.areas) if (area.kind === "green" || area.kind === "water") provenance.features.push({ kind: `area:${area.kind}`, source: area.id, position: "source", form: "source", rule: "mapped outline, drawn flat" });
+  district.furniture.forEach((item) => provenance.features.push({ kind: `mapped:${item.kind ?? "object"}`, source: item.id, position: "source", form: "decorative", rule: "mapped point; generic model", x: item.point[0], z: item.point[1] }));
+  for (const d of decorations) provenance.features.push({ kind: `decoration:${d.kind}`, source: null, position: "decorative", form: "decorative", rule: d.rule, x: d.x, z: d.z });
+  const labels = collectLabels(district, A.viaductHeight);
+  for (const label of labels) provenance.features.push({ kind: `label:${label.kind}`, source: label.source, position: "source", form: "source", rule: "name and position as mapped", x: label.x, z: label.z });
+  add("nameLabels", labels.length);
+
+  return { materials, cars, shadowCasters: casters, counts, obstacles, roadSurfaces, buildingIndex, decorations, debug, provenance, labels, gates: gatePlans, verges };
 }

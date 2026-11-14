@@ -82,6 +82,7 @@ function boot(district: DistrictData | null): () => void {
         district,
         settings: browserSettings(),
         trafficCount: parseTrafficCount(window.location.search),
+        onLabels: (labels) => overlay.setLabels(labels),
         onGarage: (state) => {
           if (!state.open) return garage.hide();
           const v = state.vehicle;
@@ -97,7 +98,10 @@ function boot(district: DistrictData | null): () => void {
     if (district) {
       overlay.setHelp("W/S: drive, brake, reverse · A/D: steer · Space: handbrake · C: camera · G: garage · L: headlights · V: data views · R: back to start");
       if (district.synthetic) overlay.setCredit("SYNTHETIC TEST DATA: an invented layout, not a map of Greater Noida", true);
-      else overlay.setCredit(`${district.name} · ${district.attribution} · heights, widths, facades and markings are partly estimated or generated (press V)`);
+      else {
+        const generic = (game as DistrictGame).world.counts.genericReconstructions ?? 0;
+        overlay.setCredit(`${district.name} · ${district.attribution} · ${generic} of ${district.buildings.length} buildings are generic reconstructions on mapped outlines (use unknown) · heights, widths, facades, gates and markings are estimated or generated (press V)`);
+      }
     } else {
       overlay.setHelp("Fictional test district · Drag: orbit · Wheel: zoom · C: change view · R: reset view");
       overlay.setCredit("Fictional test district: not a real place", true);
