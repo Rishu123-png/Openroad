@@ -6,6 +6,7 @@ import { Game } from "./game/engine/Game";
 import type { GameBase, GameOptions } from "./game/engine/GameBase";
 import { PLAYER_CARS } from "./game/vehicle/models/carSpecs";
 import { KeyboardInput } from "./input/KeyboardInput";
+import { parseTrafficCount } from "./game/traffic/trafficOption";
 import { Garage } from "./ui/Garage";
 import { Overlay } from "./ui/Overlay";
 
@@ -76,12 +77,11 @@ function boot(district: DistrictData | null): () => void {
         quality: (value) => districtGame?.setQuality(value),
       });
       disposers.push(() => garage.dispose());
-      const traffic = Number(new URLSearchParams(window.location.search).get("traffic") ?? NaN);
       districtGame = new DistrictGame({
         ...options,
         district,
         settings: browserSettings(),
-        trafficCount: Number.isFinite(traffic) ? traffic : undefined,
+        trafficCount: parseTrafficCount(window.location.search),
         onGarage: (state) => {
           if (!state.open) return garage.hide();
           const v = state.vehicle;

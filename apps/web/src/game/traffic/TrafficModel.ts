@@ -20,7 +20,9 @@ export const TRAFFIC = {
   /** Vehicles keep left, as in India. */
   keepLeft: true,
   /** Looks this far ahead for a vehicle in its own lane. */
-  lookAhead: 20,
+  lookAhead: 40,
+  /** Speed allowed per metre of room beyond the gap, in 1/s. */
+  followGain: 0.4,
   /** Bumper-to-bumper gap held behind a stopped vehicle, plus a car length. */
   gap: 7,
   laneHalfWidth: 1.5,
@@ -29,6 +31,9 @@ export const TRAFFIC = {
   spawnFromOthers: 14,
   /** A vehicle that has not moved for this long is taken out and re-enters elsewhere. */
   stuckSeconds: 8,
+  /** Shortest road, in metres, that traffic will use. */
+  minRoadLength: 8,
+  maxHopsPerStep: 6,
   seed: 2611,
 } as const;
 
@@ -60,6 +65,19 @@ interface Link {
   index: number;
 }
 
+function measured(road: DistrictRoad): number {
+  let length = 0;
+  for (let i = 1; i < road.points.length; i++) length += Math.hypot(road.points[i]![0] - road.points[i - 1]![0], road.points[i]![1] - road.points[i - 1]![1]);
+  return length;
+}
+
+/** A road traffic can follow: finite points, a finite width, and long enough to drive along. */
+function usable(road: DistrictRoad): boolean {
+  if (!Array.isArray(road.points) || road.points.length < 2 || !Number.isFinite(road.width) || road.width <= 0) return false;
+  for (const p of road.points) if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return false;
+  return measured(road) >= TRAFFIC.minRoadLength;
+}
+
 const key = (p: readonly [number, number]): number => Math.round(p[0] * 10) * 1_000_003 + Math.round(p[1] * 10);
 
 /**
@@ -87,7 +105,7 @@ export class TrafficModel {
   ) {
     this.random = new Random(seed);
     this.bounds = district.bounds;
-    this.roads = district.roads.filter((r) => r.kind === "road" && !r.tunnel && !r.elevated && r.points.length >= 2 && TRAFFIC.classes.includes(r.class as never));
+    this.roads = district.roads.filter((r) => r.kind === "road" && !r.tunnel && !r.elevated && TRAFFIC.classes.includes(r.class as never) && usable(r));
     this.roads.forEach((road, r) => {
       road.points.forEach((p, index) => {
         const k = key(p);
@@ -96,7 +114,8 @@ export class TrafficModel {
         else this.links.set(k, [{ road: r, index }]);
       });
     });
-    this.lengths = this.roads.map((r) => r.length);
+    // Measured here rather than read from the file, so a wrong or missing length cannot skew where vehicles appear.
+    this.lengths = this.roads.map((r) => measured(r));
     this.totalLength = this.lengths.reduce((a, b) => a + b, 0);
   }
 
@@ -108,7 +127,8 @@ export class TrafficModel {
 
   /** Sets how many vehicles exist. They are placed on the next update. */
   setCount(count: number): void {
-    const n = this.roads.length === 0 ? 0 : Math.max(0, Math.min(TRAFFIC.maxCount, Math.floor(count)));
+    // Anything that is not a number means none, rather than an invalid array length.
+    const n = this.roads.length === 0 || !Number.isFinite(count) ? 0 : Math.max(0, Math.min(TRAFFIC.maxCount, Math.floor(count)));
     while (this.cars.length < n) {
       const i = this.cars.length;
       this.cars.push({ active: false, road: 0, from: 0, dir: 1, along: 0, x: 0, z: 0, heading: 0, speed: 0, moved: 0, pace: 0.85 + this.random.next() * 0.25, stuck: 0, model: i, paint: Math.floor(this.random.next() * 1000) });
@@ -248,7 +268,8 @@ export class TrafficModel {
         const ahead = dx * fx + dz * fz;
         if (ahead <= 0 || ahead > T.lookAhead) continue;
         if (Math.abs(dx * fz - dz * fx) > T.laneHalfWidth) continue;
-        wanted = Math.min(wanted, Math.max(0, (ahead - T.gap) * 0.9));
+        // Speed in proportion to the room left. The factor keeps the braking this asks for within T.braking at any traffic speed.
+        wanted = Math.min(wanted, Math.max(0, (ahead - T.gap) * T.followGain));
       }
 
       if (car.speed < wanted) car.speed = Math.min(wanted, car.speed + T.acceleration * dt);
@@ -256,7 +277,13 @@ export class TrafficModel {
 
       car.along += car.speed * dt;
       let alive = true;
+      // A vehicle passes at most a few points in one step; more means segments too short to drive on.
+      let hops = 0;
       while (alive && car.along >= t.length) {
+        if (++hops > TRAFFIC.maxHopsPerStep) {
+          alive = false;
+          break;
+        }
         const extra = car.along - t.length;
         alive = this.advance(car);
         if (alive) {

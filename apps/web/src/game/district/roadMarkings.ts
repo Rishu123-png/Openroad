@@ -15,6 +15,7 @@ export const MARKING_RULES = {
   /** Classes that also get solid edge lines. */
   edgeLineClasses: ["trunk", "primary", "secondary"],
   minWidth: 5.5,
+  minLaneWidth: 2.5,
   lineWidth: 0.12,
   dash: 3,
   gap: 4.5,
@@ -75,7 +76,12 @@ export function addLine(g: GeometryBuffer, road: DistrictRoad, offset: number, d
 export function addLaneMarkings(g: GeometryBuffer, road: DistrictRoad, y: number, junctionZones: SegmentGrid): number {
   const M = MARKING_RULES;
   if (road.kind !== "road" || !M.classes.includes(road.class as never) || road.width < M.minWidth || road.tunnel) return 0;
-  const lanes = Math.max(road.oneway ? 1 : 2, Math.round(road.lanes ?? (road.oneway ? 1 : 2)));
+  const least = road.oneway ? 1 : 2;
+  const stated = Number.isFinite(road.lanes) ? Math.round(road.lanes as number) : least;
+  // A lane count the width cannot hold is a data error: never paint lanes narrower than minLaneWidth.
+  let lanes = Math.max(least, Math.min(stated, Math.floor(road.width / M.minLaneWidth)));
+  // A two-way road is split evenly about its centre line; an odd count (a shared middle lane) is drawn as the even count below it.
+  if (!road.oneway) lanes -= lanes % 2;
   let made = 0;
   if (!road.oneway) {
     // Centre line: broken on two-lane roads, solid where there are two or more lanes each way.

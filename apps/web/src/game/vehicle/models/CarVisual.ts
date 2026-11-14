@@ -175,7 +175,7 @@ export class CarFactory {
     const shadow = child(this.shadowTemplate.createInstance(`${name}:shadow`));
     shadow.scaling.set(spec.width * 1.25, 1, spec.length * 1.15);
     shadow.position.y = 0.012;
-    return new CarVisual(spec, root, wheels, tail, t.geometry.headlamps, body);
+    return new CarVisual(spec, root, wheels, tail, t.geometry.headlamps, body, ownTailLamps);
   }
 
   /** Vertex and triangle counts of a model, for the performance notes. */
@@ -203,6 +203,7 @@ export class CarVisual {
     private readonly tailLamps: PBRMaterial,
     readonly headlamps: readonly V3[],
     readonly body: Mesh,
+    private readonly ownsTailLamps = false,
   ) {}
 
   /**
@@ -242,7 +243,9 @@ export class CarVisual {
     this.root.setEnabled(on);
   }
 
+  /** Removes this car. Shared templates and materials stay; a tail-lamp material made for this car alone goes with it. */
   dispose(): void {
     this.root.dispose(false, false);
+    if (this.ownsTailLamps) this.tailLamps.dispose();
   }
 }

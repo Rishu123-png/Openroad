@@ -27,6 +27,8 @@ export class Part {
     const ux = p[b * 3]! - p[a * 3]!, uy = p[b * 3 + 1]! - p[a * 3 + 1]!, uz = p[b * 3 + 2]! - p[a * 3 + 2]!;
     const vx = p[c * 3]! - p[a * 3]!, vy = p[c * 3 + 1]! - p[a * 3 + 1]!, vz = p[c * 3 + 2]! - p[a * 3 + 2]!;
     const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    // A triangle with no area (two corners in one place) draws nothing and would leave a vertex without a normal.
+    if (nx * nx + ny * ny + nz * nz < 1e-18) return;
     for (const i of [a, b, c]) {
       this.normals[i * 3]! += nx;
       this.normals[i * 3 + 1]! += ny;
@@ -64,7 +66,14 @@ export class Part {
   finish(): void {
     const n = this.normals;
     for (let i = 0; i < n.length; i += 3) {
-      const l = Math.hypot(n[i]!, n[i + 1]!, n[i + 2]!) || 1;
+      const l = Math.hypot(n[i]!, n[i + 1]!, n[i + 2]!);
+      if (l < 1e-12) {
+        // No triangle uses this vertex, or its faces cancel: point it up rather than leave it unlit.
+        n[i] = 0;
+        n[i + 1] = 1;
+        n[i + 2] = 0;
+        continue;
+      }
       n[i]! /= l;
       n[i + 1]! /= l;
       n[i + 2]! /= l;

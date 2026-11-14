@@ -27,8 +27,6 @@ export const CHASE_VIEWS: readonly ChaseView[] = [
 
 /** Higher turns the camera behind the vehicle sooner. */
 const FOLLOW_RATE = 3.2;
-/** The camera closes in quickly when a wall is in the way and backs out slowly afterwards. */
-const PULL_IN_RATE = 12;
 const EASE_OUT_RATE = 1.6;
 const MIN_DISTANCE = 1.6;
 const PROBE_STEP = 0.5;
@@ -135,9 +133,9 @@ export class ChaseCamera {
           break;
         }
       }
-      const rate = clear < this.distance ? PULL_IN_RATE : EASE_OUT_RATE;
-      this.distance += (clear - this.distance) * (1 - Math.exp(-rate * deltaSeconds));
-      if (this.distance > clear + 1.5) this.distance = clear + 1.5; // never linger deep inside a wall
+      // In at once, out gradually: easing inward would leave the camera inside the wall while it caught up.
+      if (clear < this.distance) this.distance = clear;
+      else this.distance += (clear - this.distance) * (1 - Math.exp(-EASE_OUT_RATE * deltaSeconds));
       back = this.distance;
       // Closer means higher, so the vehicle stays in view over its own roof.
       height = view.height + Math.max(0, view.back - back) * 0.38;

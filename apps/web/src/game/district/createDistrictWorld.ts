@@ -12,7 +12,7 @@ import { broadTree, columnarTree } from "../world/vegetation";
 import { CarFactory, type CarVisual } from "../vehicle/models/CarVisual";
 import { TRAFFIC_CARS, TRAFFIC_PAINTS } from "../vehicle/models/carSpecs";
 import { BuildingIndex } from "./BuildingIndex";
-import { BUILDING_LAYERS, dressBuilding } from "./buildingGeometry";
+import { BUILDING_LAYERS, dressBuilding, usableHeight } from "./buildingGeometry";
 import { addJunctionMarkings, addLaneMarkings, addSpeedBreaker } from "./roadMarkings";
 import { DebugViews, type DebugTints, type TintRange } from "./DebugViews";
 import { placeDecorations, type Decoration } from "./decorations";
@@ -238,12 +238,25 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     const roof: Color = [0.62 * k, 0.6 * k, 0.57 * k];
     const tints: DebugTints = [DEBUG_CATEGORY[building.category], DEBUG_HEIGHT[building.heightStatus], OSM_BLUE];
     const [cx, cz] = building.centre;
-    const before = BUILDING_LAYERS.map((layer) => at(layer, cx, cz).buffer.vertexCount);
-    add("generatedBalconies", dressBuilding((layer) => at(layer, cx, cz).buffer, building, wall, roof));
-    BUILDING_LAYERS.forEach((layer, i) => {
+    // Walls and roof are the mapped footprint; the parapet, door and balconies are generated and are tinted as such.
+    const generatedTints: DebugTints = [tints[0], tints[1], GENERATED_MAGENTA];
+    const open = new Map<MaterialKey, { batch: Batch; start: number; generated: boolean }>();
+    const close = (layer: MaterialKey): void => {
+      const o = open.get(layer);
+      if (o && o.batch.buffer.vertexCount > o.start) o.batch.ranges.push({ start: o.start, count: o.batch.buffer.vertexCount - o.start, tints: o.generated ? generatedTints : tints });
+      open.delete(layer);
+    };
+    const balconies = dressBuilding((layer, generated = false) => {
       const batch = at(layer, cx, cz);
-      if (batch.buffer.vertexCount > before[i]!) batch.ranges.push({ start: before[i]!, count: batch.buffer.vertexCount - before[i]!, tints });
-    });
+      const o = open.get(layer);
+      if (!o || o.generated !== generated) {
+        close(layer);
+        open.set(layer, { batch, start: batch.buffer.vertexCount, generated });
+      }
+      return batch.buffer;
+    }, building, wall, roof);
+    for (const layer of BUILDING_LAYERS) close(layer);
+    add("generatedBalconies", balconies);
     for (const polygon of building.polygons) {
       for (const ring of [polygon.outer, ...polygon.holes]) {
         for (let i = 1; i < ring.length; i++) obstacles.add(ring[i - 1]![0], ring[i - 1]![1], ring[i]![0], ring[i]![1], 0);
@@ -252,6 +265,7 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     add("buildings");
     add(`buildings:${building.category}`);
     add(`height:${building.heightStatus}`);
+    if (usableHeight(building.height) !== building.height) add("heightsUnusable");
   }
 
   // ---- mapped barriers: walls with an opening at each mapped gate and wherever a mapped road passes through

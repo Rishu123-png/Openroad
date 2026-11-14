@@ -12,7 +12,7 @@ export const DEBUG_VIEWS = [
   { name: "Height source", legend: "green: height tag · yellow: mapped levels × 3.2 m · red: estimated (category default)" },
   {
     name: "Data source",
-    legend: "blue: OSM building footprint · roads: green = mapped width, yellow = from mapped lanes, orange = estimated width · cyan: mapped point or line · magenta: generated decoration · yellow line: sector outline",
+    legend: "blue: OSM building footprint (the window pattern on it is generated) · roads: green = mapped width, yellow = from mapped lanes, orange = estimated width · cyan: mapped point or line · magenta: generated (trees, lights, parked cars, road markings, road margins, parapets, doors, balconies) · yellow line: sector outline",
   },
 ] as const;
 

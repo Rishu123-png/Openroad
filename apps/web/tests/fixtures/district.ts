@@ -8,13 +8,22 @@ import type { DistrictBuilding, DistrictData, Point, Polygon } from "../../src/g
  */
 const box = (x: number, z: number, w: number, d: number): Point[] => [[x, z], [x + w, z], [x + w, z + d], [x, z + d], [x, z]];
 
+function areaOf(polygons: Polygon[]): number {
+  const ring = (r: readonly Point[]): number => {
+    let a = 0;
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += r[j]![0] * r[i]![1] - r[i]![0] * r[j]![1];
+    return Math.abs(a / 2);
+  };
+  return polygons.reduce((sum, p) => sum + ring(p.outer) - p.holes.reduce((h, r) => h + ring(r), 0), 0);
+}
+
 function building(id: string, polygons: Polygon[], extra: Partial<DistrictBuilding> = {}): DistrictBuilding {
   const pts = polygons.flatMap((p) => p.outer);
   const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
   return {
     id, osm: { type: id.startsWith("relation") ? "relation" : "way", id: Number(id.split("/")[1]) }, tags: { building: "yes" },
     category: "unclassified", categoryRule: "building=yes with no other evidence", height: 6.5, heightStatus: "estimated", heightBasis: "default for unclassified",
-    polygons, area: 0, centre: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2], inSector: true, clipped: false, fromRelation: id.startsWith("relation"),
+    polygons, area: areaOf(polygons), centre: [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2], inSector: true, clipped: false, fromRelation: id.startsWith("relation"),
     ...extra,
   };
 }

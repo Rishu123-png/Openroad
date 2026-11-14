@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+
+# The real Alpha 1 district file is git-ignored and is never available here.
+# Nothing in this workflow needs it: the unit suite uses synthetic fixtures,
+# and the real-data step skips and says so.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:tools
+      - run: npm run build
+      - name: Real-data tests (skipped without the district file)
+        run: npm run test:real
+      - name: Browser smoke test (skipped if no Chrome is found)
+        run: CHROME_PATH="$(which google-chrome || true)" npm run test:smoke -- --no-build

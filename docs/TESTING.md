@@ -1,0 +1,61 @@
+# Testing
+
+| Command | What it runs | Needs |
+| --- | --- | --- |
+| `npm run typecheck` | TypeScript over the app and its tests | nothing |
+| `npm run test:unit` (or `npm test`) | App tests: vitest, headless Babylon `NullEngine` | nothing |
+| `npm run test:tools` | Geodata tool tests: `node --test` | nothing |
+| `npm run build` | Typecheck and production build | nothing |
+| `npm run check` | The four above, in order | nothing |
+| `npm run test:real` | Real Alpha 1 district checks | `apps/web/public/regions/greater-noida/alpha-1.json` |
+| `npm run test:smoke` | Builds, serves and drives the game in headless Chrome | a Chrome or Chromium (`CHROME_PATH`) |
+
+## Synthetic and real data
+
+Every test in `npm run test:unit` uses invented data: hand-written fixtures in
+`apps/web/tests/fixtures/` and the file `tools/build-district.mjs --synthetic`
+writes. A pass says the code is right. It says nothing about the map.
+
+`npm run test:real` reads the district file built on your machine from the
+OpenStreetMap extract. That file is git-ignored. Where it is missing, every
+real-data test is **skipped**, the run prints `REAL ALPHA 1 TESTS: SKIPPED`
+with the reason, and exits 0, so CI and fresh clones are not broken. Nothing
+is substituted: a synthetic file placed at the real path fails the identity
+test. Use `OPENROAD_DISTRICT=/path/to/alpha-1.json` for another location.
+
+The real suite checks: name, region and source record; that the sector is the
+mapped Alpha 1 object; finite numbers throughout; closed outlines; courtyards
+inside their buildings; no duplicate building ids; no relation also built as
+a way; roads and junctions consistent; nothing outside the region; the spawn
+point on a carriageway and outside buildings; and a minute of maximum traffic
+on the real roads. The checks themselves (`tests/support/districtChecks.ts`,
+`districtFile.ts`) are tested in the ordinary suite on sound data and on data
+broken on purpose (`tests/districtChecks.test.ts`).
+
+## Browser smoke test
+
+`tools/smoke/browser-smoke.mjs` uses real key presses and the game's own
+render loop on the synthetic district: startup, first-visit garage, selection
+by key and by button, spawn, saved choice, camera cycle, driving, steering,
+stopping, reset, overlay statistics from a real renderer, reload, default
+traffic, and no uncaught errors or failed requests. With no browser it prints
+`BROWSER SMOKE TEST: SKIPPED` and exits 0 (`--require` makes that a failure).
+If the real district has been built it also starts the game on it.
+
+It saves `garage-suv`, `garage-sedan`, `chase`, `bonnet` and `street`
+screenshots (and `alpha1-street` on real data) to `test-results/smoke/` at
+1280x720 with traffic off. These are for a person to look at. They are not
+compared with stored images: there is no visual regression suite, because
+software rendering differs between machines and the project has no pinned
+browser to make a pixel comparison trustworthy.
+
+No test asserts a frame rate.
+
+## Known gaps
+
+- Traffic has no right-of-way at junctions: cars on crossing roads can pass
+  through each other. The tests check spacing on the open road only.
+- Draw calls and triangle counts are zero under `NullEngine`; only the smoke
+  test sees real values, and it only checks they are above zero.
+- Mouse and touch camera control, the night/headlight appearance and SSAO are
+  not tested.

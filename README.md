@@ -82,3 +82,7 @@ The world shown today is still a fictional test district. Work has started on bu
 - [docs/REGION_PACKAGES.md](docs/REGION_PACKAGES.md): design of downloadable region packages (not implemented).
 
 Map data © OpenStreetMap contributors, available under the Open Database License.
+
+## Testing
+
+`npm run check` runs the typecheck, app tests, tool tests and build. `npm run test:real` checks the real Alpha 1 district file when it has been built locally and skips, saying so, when it has not. `npm run test:smoke` drives the built game in headless Chrome. See [docs/TESTING.md](docs/TESTING.md).

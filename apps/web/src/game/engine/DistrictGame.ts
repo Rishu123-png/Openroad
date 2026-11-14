@@ -87,7 +87,7 @@ export class DistrictGame extends GameBase {
   }
 
   protected build(): void {
-    const { district, settings } = this.opts;
+    const { district } = this.opts;
     const problem = spawnProblem(district);
     if (problem) throw new Error(`The district cannot be started: ${problem}. Rebuild it with tools/build-district.mjs.`);
 
@@ -108,14 +108,14 @@ export class DistrictGame extends GameBase {
     self.traffic = new TrafficModel(district, buildingIndex);
     this.trafficView = new TrafficView(this.traffic, this.world.cars, RIDE_HEIGHT);
 
-    const saved = settings?.getItem(SETTING_KEYS.vehicle);
+    const saved = this.readSetting(SETTING_KEYS.vehicle);
     const savedIndex = PLAYER_CARS.findIndex((c) => c.id === saved);
     this.vehicleIndex = Math.max(0, savedIndex);
     this.spawnPlayerCar();
     this.respawn();
 
-    const quality = settings?.getItem(SETTING_KEYS.quality);
-    this.graphics = quality === "low" || quality === "high" ? quality : "medium";
+    const quality = this.readSetting(SETTING_KEYS.quality);
+    this.graphics = quality === "low" || quality === "high" ? quality : "medium"; // anything else, including a damaged value
     this.applyQuality();
 
     // First visit: choose a vehicle before driving.
@@ -136,6 +136,24 @@ export class DistrictGame extends GameBase {
       input.onPressed(InputAction.SteerRight, () => this.garageOpen && this.selectVehicle(this.vehicleIndex + 1)),
       input.onPressed(InputAction.Headlights, () => this.setHeadlights(!this.headlightsOn)),
     );
+  }
+
+  /** Storage can refuse (private browsing, full quota, blocked cookies). The game then runs without remembering. */
+  private readSetting(key: string): string | null {
+    try {
+      const value = this.opts.settings?.getItem(key);
+      return typeof value === "string" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeSetting(key: string, value: string): void {
+    try {
+      this.opts.settings?.setItem(key, value);
+    } catch {
+      // Nothing to do: the choice still applies to this session.
+    }
   }
 
   get selectedVehicle(): CarSpec {
@@ -177,7 +195,7 @@ export class DistrictGame extends GameBase {
       this.spawnPlayerCar();
       this.update(0);
     }
-    this.opts.settings?.setItem(SETTING_KEYS.vehicle, this.selectedVehicle.id);
+    this.writeSetting(SETTING_KEYS.vehicle, this.selectedVehicle.id);
     this.notifyGarage();
   }
 
@@ -196,7 +214,7 @@ export class DistrictGame extends GameBase {
     this.camera.setOrbiting(false);
     this.camera.snap(this.vehicle.heading);
     this.scene.fogDensity = DAYLIGHT.fogDensity * this.camera.haze;
-    this.opts.settings?.setItem(SETTING_KEYS.vehicle, this.selectedVehicle.id);
+    this.writeSetting(SETTING_KEYS.vehicle, this.selectedVehicle.id);
     this.notifyGarage();
   }
 
@@ -205,8 +223,9 @@ export class DistrictGame extends GameBase {
   }
 
   setQuality(quality: GraphicsQuality): void {
+    if (!(quality in QUALITY)) return;
     this.graphics = quality;
-    this.opts.settings?.setItem(SETTING_KEYS.quality, quality);
+    this.writeSetting(SETTING_KEYS.quality, quality);
     this.applyQuality();
     this.notifyGarage();
   }
@@ -277,7 +296,8 @@ export class DistrictGame extends GameBase {
     // Distance along the heading, so the wheels turn backwards in reverse.
     const travelled = (v.x - px) * Math.sin(v.heading) + (v.z - pz) * Math.cos(v.heading);
     this.playerCar.place(v.x, RIDE_HEIGHT, v.z, v.heading, travelled, v.steer);
-    this.playerCar.setBraking(driving && (v.braking || (c.brake && v.speed >= 0)));
+    // Lit by the handbrake and while the brake pedal slows forward motion; not when S is reversing the car.
+    this.playerCar.setBraking(driving && (c.handbrake || v.braking || (c.brake && v.speed > 0.3)));
     this.camera.update(v.x, v.z, v.heading, deltaSeconds, v.speed);
   }
 
