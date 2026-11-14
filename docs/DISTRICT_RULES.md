@@ -215,3 +215,34 @@ Mapped roads and mapped buildings sometimes conflict: a gatehouse or canopy draw
 ### Controls added
 
 G garage, Enter confirm, L headlights. C now cycles Chase, Bonnet, High and Overview. The chase camera moves in rather than pass through a building.
+
+## Traffic and the district boundary
+
+The boundary is `bounds` in the district file. Traffic never changes it; the
+rendered map and the player are unaffected.
+
+- **Margin.** A traffic vehicle's centre stays `boundaryInset()` inside the
+  boundary: half the diagonal of the largest traffic vehicle (4.70 × 1.86 m)
+  plus `ROAD_SAFETY.margin`, about 2.78 m. At that distance no corner of the
+  body can cross the boundary at any heading.
+- **Lanes are cut, not roads.** For each segment and direction, the part of
+  the lane line inside the margin is recorded (`safety.limits`, listed in
+  `safety.trimmed`). A segment with no lane part of at least
+  `ROAD_SAFETY.minInsideLength` (6 m, or its own length if shorter) inside is
+  excluded from traffic with the reason `lane-outside-district-boundary`.
+- **At the cut.** A vehicle slows, stops at the limit and turns back into the
+  opposite lane of the same segment, waiting for room there. On a one-way
+  road, or where the opposite lane is also outside, it is removed at the limit
+  and placed again elsewhere.
+- **Entering.** A segment whose lane starts inside the margin zone is not
+  entered from that end.
+- **Placement.** Spawn and respawn pick a point within the recorded limits and
+  then pass the same whole-body check as movement.
+- **Backstop.** Every move tests the centre and four corners against the
+  boundary (`footprintOutside`) together with the building test. A move that
+  would cross is pulled to the lane line; failing that the vehicle is removed
+  in place and the turn or segment is no longer used (`safety.removals`,
+  `buildingId: "district-boundary"`).
+
+Limitation: the boundary used is the rectangle `bounds`, which is what the
+tests measure against. It is not the sector outline polygon.

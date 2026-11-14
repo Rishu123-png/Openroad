@@ -120,13 +120,15 @@ describe.skipIf(!present)("real Alpha 1 district file", () => {
       console.log(
         [
           "",
-          ` REAL DATA traffic: ${report.placed} of ${TRAFFIC.maxCount} cars placed on ${report.usableRoads} usable roads; ${report.moved} travelled more than 10 m in 60 s of game time; built and ran in ${((performance.now() - t0) / 1000).toFixed(1)} s`,
+          ` REAL DATA traffic: ${report.placed} of ${TRAFFIC.maxCount} cars placed on ${report.usableRoads} usable roads; ${report.travelled} drove more than 10 m in 60 s of game time (${report.moved} ended more than 10 m from where they started); built and ran in ${((performance.now() - t0) / 1000).toFixed(1)} s`,
           ...report.lines.map((l) => ` REAL DATA ${l}`),
           "",
         ].join("\n"),
       );
       expect(report.problems).toEqual([]);
       expect(report.vehiclesInBuildings, "vehicles whose centre or body entered a building").toEqual([]);
+      expect(report.vehiclesOutside, "vehicles whose centre or body left the district").toEqual([]);
+      expect(report.travelled, "vehicles that drove more than 10 m").toBe(report.placed);
       expect(report.usableRoads).toBeGreaterThan(0);
       expect(report.placed).toBeGreaterThan(0);
       expect(report.placed).toBeLessThanOrEqual(TRAFFIC.maxCount);

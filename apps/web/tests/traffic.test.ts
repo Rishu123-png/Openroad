@@ -124,15 +124,21 @@ describe("traffic placement", () => {
     );
     const traffic = model(district, 25);
     traffic.update(0, ...FAR);
+    // A vehicle's centre stays half a body diagonal plus a margin inside the edge, so no corner can cross it.
+    const inside = 150 - traffic.safety.boundaryInset;
+    expect(inside).toBeLessThan(147.5);
     for (const car of traffic.cars.filter((c) => c.active)) {
       // way/3 runs 3 m from the northern edge: nothing may be placed there.
-      expect(Math.max(Math.abs(car.x), Math.abs(car.z))).toBeLessThanOrEqual(146);
+      expect(Math.max(Math.abs(car.x), Math.abs(car.z))).toBeLessThanOrEqual(inside + 1e-9);
     }
     let furthest = 0;
     run(traffic, 90, (cars) => {
       for (const car of cars) furthest = Math.max(furthest, Math.abs(car.x), Math.abs(car.z));
     });
-    expect(furthest).toBeLessThanOrEqual(150 + 0.5);
+    // Roads run to the edge at +/-150. Vehicles turn back before it, body and all.
+    expect(furthest).toBeLessThanOrEqual(inside + 1e-9);
+    expect(furthest).toBeGreaterThan(inside - 3); // and they do drive out to it
+    expect(traffic.safety.excluded.map((e) => [e.roadId, e.reason])).toEqual([["way/3", "lane-outside-district-boundary"]]);
   });
 
   it("never exceeds 40 vehicles, whatever is asked for", () => {

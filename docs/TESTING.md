@@ -67,3 +67,18 @@ No test asserts a frame rate.
   test sees real values, and it only checks they are above zero.
 - Mouse and touch camera control, the night/headlight appearance and SSAO are
   not tested.
+
+### District boundary check
+
+`trafficReport` tests every vehicle on every frame against `bounds`: the
+centre and the four corners of the body. Each sample outside is reported in
+the `REAL DATA` lines with the vehicle number, time and frame, centre,
+heading, size, the part that is outside and by how much, the road id, segment
+and direction, what follows the segment, whether the centre or only the body
+is outside, and a cause label (A road reaches the boundary, B body only,
+C off the lane line in a turn, D just placed). Samples and distinct vehicles
+are counted separately. The real suite requires no vehicle outside, no
+vehicle in a building, and every vehicle to drive more than 10 m.
+
+Synthetic regression tests are in `apps/web/tests/trafficBoundary.test.ts`
+with the fixture `tests/fixtures/edgeDistrict.ts`.

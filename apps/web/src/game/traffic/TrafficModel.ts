@@ -2,7 +2,7 @@ import { Random } from "../../utils/random";
 import type { BuildingIndex } from "../district/BuildingIndex";
 import type { DistrictData, DistrictRoad } from "../district/types";
 import { TRAFFIC_CARS } from "../vehicle/models/carSpecs";
-import { analyseRoads, footprintHit, type RoadSafety } from "./roadSafety";
+import { analyseRoads, footprintHit, footprintOutside, type RoadSafety } from "./roadSafety";
 
 /**
  * Traffic settings. `count` is the default number of moving vehicles; the
@@ -141,11 +141,11 @@ export class TrafficModel {
     this.random = new Random(seed);
     this.bounds = district.bounds;
     const candidates = district.roads.filter((r) => r.kind === "road" && !r.tunnel && !r.elevated && TRAFFIC.classes.includes(r.class as never) && usable(r));
-    const all = analyseRoads(candidates, buildings, (road) => this.laneOffset(road));
+    const all = analyseRoads(candidates, buildings, (road) => this.laneOffset(road), district.bounds);
     // Roads with no drivable stretch left are dropped from routing altogether. They are still in `safety.excluded`.
     const keep = candidates.map((_, r) => all.blocked[r]!.some((b) => !b));
     this.roads = candidates.filter((_, r) => keep[r]);
-    this.safety = { ...all, blocked: all.blocked.filter((_, r) => keep[r]), offsets: all.offsets.filter((_, r) => keep[r]) };
+    this.safety = { ...all, blocked: all.blocked.filter((_, r) => keep[r]), offsets: all.offsets.filter((_, r) => keep[r]), limits: all.limits.filter((_, r) => keep[r]) };
     this.roads.forEach((road, r) => {
       road.points.forEach((p, index) => {
         const k = key(p);
@@ -158,7 +158,7 @@ export class TrafficModel {
     // Only the stretches traffic may use count.
     this.lengths = this.roads.map((road, r) => {
       let length = 0;
-      for (let i = 1; i < road.points.length; i++) if (!this.safety.blocked[r]![i - 1]) length += Math.hypot(road.points[i]![0] - road.points[i - 1]![0], road.points[i]![1] - road.points[i - 1]![1]);
+      for (let i = 1; i < road.points.length; i++) if (!this.safety.blocked[r]![i - 1]) length += Math.max(0, this.safety.limits[r]![(i - 1) * 4 + 1]! - this.safety.limits[r]![(i - 1) * 4]!);
       return length;
     });
     this.totalLength = this.lengths.reduce((a, b) => a + b, 0);
@@ -213,17 +213,75 @@ export class TrafficModel {
     return car.dir === 1 ? car.from : car.from - 1;
   }
 
+  /** True when a vehicle may not enter this stretch at its start, travelling in `dir` from point `from`. */
   private isBlocked(road: number, from: number, dir: 1 | -1): boolean {
-    return this.safety.blocked[road]?.[dir === 1 ? from : from - 1] === true;
+    if (this.safety.blocked[road]?.[dir === 1 ? from : from - 1] === true) return true;
+    // Its lane starts in the edge zone of the district: it can be driven further in, but not entered from here.
+    return this.span(road, from, dir, this.spanOut)[0] > 1e-6;
+  }
+
+  private readonly spanOut: [number, number] = [0, 0];
+
+  /**
+   * The part of a stretch a vehicle may occupy, in metres from where it enters it travelling in `dir`:
+   * the lane inside the district boundary with room for the whole vehicle.
+   */
+  private span(road: number, from: number, dir: 1 | -1, out: [number, number]): [number, number] {
+    const segment = dir === 1 ? from : from - 1;
+    const limits = this.safety.limits[road]!, i = (segment * 2 + (dir === 1 ? 0 : 1)) * 2;
+    const lo = limits[i]!, hi = limits[i + 1]!;
+    if (dir === 1) {
+      out[0] = lo;
+      out[1] = hi;
+    } else {
+      const a = this.roads[road]!.points[segment]!, b = this.roads[road]!.points[segment + 1]!;
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      out[0] = length - hi;
+      out[1] = length - lo;
+    }
+    return out;
+  }
+
+  /**
+   * Turns a vehicle round where it is, because its lane ahead leaves the district. It takes the opposite lane of
+   * the same stretch, at the nearest point of that lane that is inside. False when there is no such lane.
+   */
+  private turnBack(car: TrafficCar): boolean {
+    const road = this.roads[car.road]!;
+    if (road.oneway) return false;
+    const a = road.points[car.from]!, b = road.points[car.from + car.dir]!;
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const far = car.from + car.dir;
+    const back = this.span(car.road, far, -car.dir as 1 | -1, this.spanOut);
+    if (back[1] - back[0] < 1e-6) return false;
+    // It waits for room in the lane it turns into, as it would behind any vehicle.
+    const u = car.along / (length || 1), cx = a[0] + (b[0] - a[0]) * u, cz = a[1] + (b[1] - a[1]) * u;
+    const t = this.scratch;
+    this.target(car, t);
+    const mx = 2 * cx - t.x, mz = 2 * cz - t.z;
+    for (const other of this.cars) {
+      if (other === car || !other.active) continue;
+      if (Math.hypot(other.x - mx, other.z - mz) < TRAFFIC.gap) {
+        car.speed = 0;
+        return true;
+      }
+    }
+    car.cameFromRoad = car.road;
+    car.cameFromSegment = this.segmentOf(car);
+    car.along = Math.max(back[0], Math.min(back[1], length - car.along));
+    car.from = far;
+    car.dir = -car.dir as 1 | -1;
+    return true;
   }
 
   private turnKey(fromRoad: number, fromSegment: number, toRoad: number, toSegment: number): string {
     return `${fromRoad}:${fromSegment}>${toRoad}:${toSegment}`;
   }
 
-  /** The building a car's body would overlap at a position, or null. */
-  private hit(car: TrafficCar, x: number, z: number, heading: number): ReturnType<typeof footprintHit> {
-    return footprintHit(this.buildings, x, z, heading, car.length, car.width);
+  /** What a car's body would overlap at a position: a building's id, "district-boundary", or null when it is clear. */
+  private hit(car: TrafficCar, x: number, z: number, heading: number): string | null {
+    if (footprintOutside(this.bounds, x, z, heading, car.length, car.width)) return "district-boundary";
+    return footprintHit(this.buildings, x, z, heading, car.length, car.width)?.id ?? null;
   }
 
   private spawn(car: TrafficCar, playerX: number, playerZ: number): boolean {
@@ -240,13 +298,13 @@ export class TrafficModel {
       car.dir = dir;
       car.from = dir === 1 ? segment : segment + 1;
       car.along = 0;
-      if (this.isBlocked(r, car.from, dir)) continue; // a stretch traffic does not use
+      if (this.safety.blocked[r]![dir === 1 ? car.from : car.from - 1]) continue; // a stretch traffic does not use
       const t = this.scratch;
+      // Anywhere on the part of the lane that is inside the district with room for the vehicle.
+      const [lo, hi] = this.span(r, car.from, dir, this.spanOut);
+      if (hi - lo < 1e-6) continue;
+      car.along = lo + this.random.next() * (hi - lo);
       this.target(car, t);
-      car.along = this.random.next() * t.length;
-      this.target(car, t);
-      const b = this.bounds;
-      if (t.x < b.minX + 4 || t.x > b.maxX - 4 || t.z < b.minZ + 4 || t.z > b.maxZ - 4) continue;
       if (Math.hypot(t.x - playerX, t.z - playerZ) < T.spawnFromPlayer) continue;
       if (this.hit(car, t.x, t.z, Math.atan2(t.dx, t.dz))) continue; // the whole body, not only the centre
       if (this.cars.some((o) => o !== car && o.active && Math.hypot(o.x - t.x, o.z - t.z) < T.spawnFromOthers)) continue;
@@ -300,19 +358,21 @@ export class TrafficModel {
       car.along = 0;
       return true;
     }
-    if (!road.oneway) {
-      // Dead end or the edge of the district: turn round.
+    if (!road.oneway && !this.isBlocked(car.road, here, -car.dir as 1 | -1)) {
+      // Dead end: turn round.
       car.from = here;
       car.dir = -car.dir as 1 | -1;
       car.along = 0;
       return true;
     }
+    // A one-way road ends, or the lane back starts outside the district: the vehicle leaves and re-enters elsewhere.
     return false;
   }
 
   private remove(index: number, car: TrafficCar, t: { x: number; z: number; dx: number; dz: number }): void {
     const segment = this.segmentOf(car);
-    const building = this.hit(car, t.x, t.z, Math.atan2(t.dx, t.dz)) ?? this.hit(car, car.x + (t.x - car.x) * 0.6, car.z + (t.z - car.z) * 0.6, car.heading);
+    const obstacle = this.hit(car, t.x, t.z, Math.atan2(t.dx, t.dz)) ?? this.hit(car, car.x + (t.x - car.x) * 0.6, car.z + (t.z - car.z) * 0.6, car.heading) ?? "unknown";
+    const atEdge = obstacle === "district-boundary";
     let turnFrom: SafetyRemoval["turnFrom"] = null;
     const road = this.roads[car.road]!;
     if (car.along < TRAFFIC.turnLength && car.cameFromRoad >= 0 && (car.cameFromRoad !== car.road || car.cameFromSegment !== segment)) {
@@ -324,13 +384,13 @@ export class TrafficModel {
       this.safety.blocked[car.road]![segment] = true;
       const a = road.points[segment]!, b = road.points[segment + 1]!;
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      this.safety.excluded.push({ roadId: road.id, roadClass: road.class, segment, from: a, to: b, length, at: [car.x, car.z], reason: "vehicle-had-no-safe-position", buildingId: building?.id ?? "unknown", buildingCategory: building?.category ?? "unknown" });
+      this.safety.excluded.push({ roadId: road.id, roadClass: road.class, segment, from: a, to: b, length, at: [car.x, car.z], reason: "vehicle-had-no-safe-position", buildingId: obstacle, buildingCategory: atEdge ? "boundary" : (this.buildings.at(t.x, t.z)?.category ?? "unknown") });
       this.safety.excludedLength += length;
       this.lengths[car.road] = Math.max(0, this.lengths[car.road]! - length);
       this.totalLength = this.lengths.reduce((x, y) => x + y, 0);
     }
     this.removalCount++;
-    this.removals.push({ car: index, roadId: this.roads[car.road]!.id, segment, x: car.x, z: car.z, buildingId: building?.id ?? "unknown", turnFrom });
+    this.removals.push({ car: index, roadId: this.roads[car.road]!.id, segment, x: car.x, z: car.z, buildingId: obstacle, turnFrom });
     if (this.removals.length > 200) this.removals.shift();
     car.active = false;
     car.moved = 0;
@@ -354,6 +414,10 @@ export class TrafficModel {
 
       let wanted = (T.speed[road.class] ?? T.defaultSpeed) * car.pace;
       if (t.length - car.along < 9 && this.isJunction(car)) wanted = Math.min(wanted, T.junctionSpeed);
+      // Where the lane ahead leaves the district, the vehicle slows and turns back before the edge.
+      const limit = this.span(car.road, car.from, car.dir, this.spanOut)[1];
+      const edgeAhead = limit < t.length - 1e-6;
+      if (edgeAhead && limit - car.along < 9) wanted = Math.min(wanted, T.junctionSpeed);
 
       // Slow for whatever is ahead in this lane: other traffic and the player.
       const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
@@ -381,6 +445,11 @@ export class TrafficModel {
 
       car.along += car.speed * dt;
       let alive = true;
+      if (edgeAhead && car.along >= limit) {
+        car.along = limit;
+        alive = this.turnBack(car);
+        if (alive) this.target(car, t);
+      }
       // A vehicle passes at most a few points in one step; more means segments too short to drive on.
       let hops = 0;
       while (alive && car.along >= t.length) {

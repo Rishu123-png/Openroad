@@ -3,7 +3,7 @@ import { DistrictGame } from "../../src/game/engine/DistrictGame";
 import { pointInPolygons } from "../../src/game/district/spawn";
 import type { DistrictBuilding, DistrictData } from "../../src/game/district/types";
 import { TRAFFIC, type TrafficCar, type TrafficModel } from "../../src/game/traffic/TrafficModel";
-import { footprintHit } from "../../src/game/traffic/roadSafety";
+import { footprintHit, footprintOutside } from "../../src/game/traffic/roadSafety";
 import { keyboard, memory } from "./harness";
 
 /**
@@ -116,18 +116,92 @@ export interface TrafficIncident {
   cause: string;
 }
 
+/** A vehicle whose centre or body is outside the district's bounds. */
+export interface BoundaryIncident {
+  car: number;
+  frame: number;
+  seconds: number;
+  x: number;
+  z: number;
+  heading: number;
+  length: number;
+  width: number;
+  /** True when the centre itself is outside; false when only part of the body is. */
+  centreOutside: boolean;
+  /** The part furthest outside, and how far. */
+  part: string;
+  distance: number;
+  /** Which edge: north (+z), south, east (+x) or west. */
+  edge: string;
+  roadId: string;
+  roadClass: string;
+  segment: number;
+  direction: 1 | -1;
+  /** Metres into the segment, and the segment's length. */
+  along: number;
+  segmentLength: number;
+  /** What the vehicle would do at the end of this segment. */
+  next: string;
+  /** Frames since this vehicle was placed or re-placed. */
+  framesSincePlaced: number;
+  offLane: number;
+  cause: string;
+}
+
+export function describeBoundaryIncident(traffic: TrafficModel, bounds: DistrictData["bounds"], car: TrafficCar, index: number, frame: number, framesSincePlaced: number): BoundaryIncident | null {
+  const out = footprintOutside(bounds, car.x, car.z, car.heading, car.length, car.width);
+  if (!out) return null;
+  const centreOutside = car.x < bounds.minX || car.x > bounds.maxX || car.z < bounds.minZ || car.z > bounds.maxZ;
+  const road = traffic.roads[car.road]!;
+  const a = road.points[car.from]!, b = road.points[car.from + car.dir]!;
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1e-6;
+  const dx = (b[0] - a[0]) / length, dz = (b[1] - a[1]) / length;
+  const t = Math.max(0, Math.min(length, (car.x - a[0]) * dx + (car.z - a[1]) * dz));
+  const lateral = (car.x - (a[0] + dx * t)) * -dz + (car.z - (a[1] + dz * t)) * dx;
+  const segment = traffic.segmentOf(car);
+  const lane = traffic.safety.offsets[car.road]?.[segment * 2 + (car.dir === 1 ? 0 : 1)] ?? 0;
+  const offLane = Math.abs(lateral - lane);
+  const outside = (p: readonly [number, number]): number => Math.max(bounds.minX - p[0], p[0] - bounds.maxX, bounds.minZ - p[1], p[1] - bounds.maxZ);
+  const inset = traffic.safety.boundaryInset;
+  const nextIndex = car.from + car.dir * 2;
+  const next = nextIndex >= 0 && nextIndex < road.points.length ? `continues on ${road.id} segment ${car.dir === 1 ? car.from + 1 : car.from - 2}` : `end of ${road.id} at [${b[0].toFixed(1)}, ${b[1].toFixed(1)}], ${outside(b) > -0.05 ? "which is on the district boundary (the road was cut there)" : `${(-outside(b)).toFixed(1)} m inside the boundary`}`;
+  const edge = out.x > bounds.maxX ? "east" : out.x < bounds.minX ? "west" : out.z > bounds.maxZ ? "north" : "south";
+  let cause: string;
+  if (framesSincePlaced <= 1) cause = "D: placed here this frame (spawn or respawn too close to the edge)";
+  else if (outside(a) > -inset || outside(b) > -inset) {
+    cause = offLane > 0.75
+      ? `A+C: the mapped road reaches the boundary here and the vehicle is ${offLane.toFixed(2)} m off its lane line (turning round at the road's end)`
+      : `A: the mapped road reaches or crosses the boundary on this segment (ends ${outside(a).toFixed(1)} m and ${outside(b).toFixed(1)} m outside; negative is inside)`;
+  } else if (offLane > 0.75) cause = `C: the vehicle is ${offLane.toFixed(2)} m off its lane line (a turn) on a segment that is inside the district`;
+  else cause = "other: on its lane, on a segment that is inside the district";
+  if (!centreOutside) cause = `B (centre inside, body outside) with ${cause}`;
+  return {
+    car: index, frame, seconds: frame / 30, x: car.x, z: car.z, heading: car.heading, length: car.length, width: car.width, centreOutside, part: out.part, distance: out.distance, edge,
+    roadId: road.id, roadClass: road.class, segment, direction: car.dir, along: car.along, segmentLength: length, next, framesSincePlaced, offLane, cause,
+  };
+}
+
 export interface TrafficReport {
+  /** Every sample where a vehicle's centre or body was outside the district (first 200). */
+  boundaryIncidents: BoundaryIncident[];
+  boundaryIncidentCount: number;
+  /** Vehicles with at least one sample outside: any part, and the centre. */
+  vehiclesOutside: number[];
+  vehiclesCentreOutside: number[];
   problems: string[];
   placed: number;
   usableRoads: number;
+  /** Vehicles that ended the run more than 10 m from where they started it. */
   moved: number;
+  /** Vehicles in place at the end that drove more than 10 m along the road during the run (re-placement does not count as driving). */
+  travelled: number;
   /** Every sample where a vehicle's centre or body was inside a building (first 200). */
   incidents: TrafficIncident[];
   incidentCount: number;
   /** Vehicles with at least one incident. */
   vehiclesInBuildings: number[];
   /** What the traffic model decided not to use, and what it had to remove while driving. */
-  safety: { roadsChecked: number; roadsAffected: number; roadsFullyExcluded: number; segmentsExcluded: number; metresExcluded: number; metresChecked: number; lanesNarrowed: number; removals: number; byReason: Record<string, number> };
+  safety: { lanesTrimmedAtBoundary: number; roadsChecked: number; roadsAffected: number; roadsFullyExcluded: number; segmentsExcluded: number; metresExcluded: number; metresChecked: number; lanesNarrowed: number; removals: number; byReason: Record<string, number> };
   /** Readable lines for the test output. */
   lines: string[];
 }
@@ -198,6 +272,9 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
   const incidents: TrafficIncident[] = [];
   const offenders = new Set<number>();
   let incidentCount = 0;
+  const boundaryIncidents: BoundaryIncident[] = [];
+  const outsiders = new Set<number>(), centreOutsiders = new Set<number>();
+  let boundaryIncidentCount = 0;
   try {
     const px = game.vehicle.x, pz = game.vehicle.z;
     const traffic = game.traffic, index = game.world.buildingIndex;
@@ -211,6 +288,9 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
     }
     const startAt = cars.map((c) => [c.x, c.z] as const);
     const b = d.bounds;
+    // When each vehicle was last placed: it was inactive, or it moved further than driving allows in a frame.
+    const driven = cars.map(() => 0);
+    const placedAt = cars.map(() => 0), last = cars.map((c) => [c.x, c.z, c.active] as [number, number, boolean]);
     for (let frame = 0; frame <= seconds * 30; frame++) {
       if (frame > 0) traffic.update(1 / 30, px, pz);
       for (let i = 0; i < cars.length; i++) {
@@ -220,7 +300,19 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
           report("car samples with a value that is not finite");
           continue;
         }
-        if (c.x < b.minX || c.x > b.maxX || c.z < b.minZ || c.z > b.maxZ) report("car samples outside the district");
+        const was = last[i]!;
+        if (!was[2] || Math.hypot(c.x - was[0], c.z - was[1]) > 3) placedAt[i] = frame;
+        else driven[i]! += Math.hypot(c.x - was[0], c.z - was[1]);
+        const centreOut = c.x < b.minX || c.x > b.maxX || c.z < b.minZ || c.z > b.maxZ;
+        if (centreOut) report("car samples outside the district");
+        const edge = describeBoundaryIncident(traffic, b, c, i, frame, frame - placedAt[i]!);
+        if (edge) {
+          if (!centreOut) report("car samples with the body outside the district");
+          boundaryIncidentCount++;
+          outsiders.add(i);
+          if (centreOut) centreOutsiders.add(i);
+          if (boundaryIncidents.length < 200) boundaryIncidents.push(edge);
+        }
         if (!game.world.roadSurfaces.near(c.x, c.z, 1)) report("car samples off every mapped carriageway");
         const centre = index.at(c.x, c.z);
         const body = centre ?? footprintHit(index, c.x, c.z, c.heading, c.length, c.width);
@@ -232,6 +324,11 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
           if (incidents.length < 200) incidents.push(describeIncident(traffic, index, c, i, frame, body, Boolean(centre)));
         }
       }
+      cars.forEach((c, i) => {
+        last[i]![0] = c.x;
+        last[i]![1] = c.z;
+        last[i]![2] = c.active;
+      });
     }
     for (const [kind, n] of tally) problems.push(`${n} ${kind}`);
     const placed = traffic.activeCount;
@@ -243,7 +340,7 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
     const affected = new Set(s.excluded.map((e) => e.roadId));
     const safety = {
       roadsChecked: traffic.roads.length + s.roadsFullyExcluded, roadsAffected: affected.size, roadsFullyExcluded: s.roadsFullyExcluded, segmentsExcluded: s.excluded.length,
-      metresExcluded: Math.round(s.excludedLength), metresChecked: Math.round(s.checkedLength), lanesNarrowed: s.narrowed.length, removals: traffic.removalCount, byReason,
+      metresExcluded: Math.round(s.excludedLength), metresChecked: Math.round(s.checkedLength), lanesNarrowed: s.narrowed.length, lanesTrimmedAtBoundary: s.trimmed.length, removals: traffic.removalCount, byReason,
     };
     const lines: string[] = [];
     lines.push(`roads checked for traffic: ${safety.roadsChecked}; unsafe roads found: ${safety.roadsAffected} (${safety.segmentsExcluded} segments, ${safety.metresExcluded} m of ${safety.metresChecked} m)`);
@@ -253,6 +350,19 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
     if (s.excluded.length > 25) lines.push(`  ... and ${s.excluded.length - 25} more unsafe segments`);
     lines.push(`vehicles tested: ${placed}; frames checked: ${seconds * 30 + 1}; vehicles removed while driving because no safe position existed: ${safety.removals}`);
     for (const r of traffic.removals.slice(0, 10)) lines.push(`  removed: vehicle ${r.car} on ${r.roadId} segment ${r.segment} at [${f1(r.x)}, ${f1(r.z)}], building ${r.buildingId}${r.turnFrom ? `, after turning from ${r.turnFrom.roadId} segment ${r.turnFrom.segment} (turn not used again)` : ""}`);
+    const sorted = (set: Set<number>): string => [...set].sort((x, y) => x - y).join(", ");
+    lines.push(`district boundary x ${b.minX}..${b.maxX}, z ${b.minZ}..${b.maxZ}; lane lines kept ${s.boundaryInset.toFixed(2)} m inside it; lanes cut short at the edge: ${s.trimmed.length} segment-directions on ${new Set(s.trimmed.map((x) => x.roadId)).size} roads`);
+    lines.push(`outside the district: ${boundaryIncidentCount} samples from ${outsiders.size} different vehicles${outsiders.size ? ` (vehicles ${sorted(outsiders)})` : ""}; centre outside: ${centreOutsiders.size} vehicles${centreOutsiders.size ? ` (${sorted(centreOutsiders)})` : ""}; body only: ${outsiders.size - centreOutsiders.size} vehicles`);
+    const edgeCauses: Record<string, number> = {};
+    for (const it of boundaryIncidents) edgeCauses[it.cause.split(":")[0]!] = (edgeCauses[it.cause.split(":")[0]!] ?? 0) + 1;
+    if (boundaryIncidents.length) lines.push(`  by cause: ${JSON.stringify(edgeCauses)}`);
+    for (const it of boundaryIncidents.slice(0, 40)) {
+      lines.push(
+        `  vehicle ${it.car} at ${it.seconds.toFixed(2)} s (frame ${it.frame}, ${it.framesSincePlaced} frames after placement): centre [${it.x.toFixed(2)}, ${it.z.toFixed(2)}] ${it.centreOutside ? "OUTSIDE" : "inside"}, heading ${it.heading.toFixed(2)} rad, ${it.length} x ${it.width} m; ` +
+          `${it.part} ${it.distance.toFixed(2)} m beyond the ${it.edge} edge; road ${it.roadId} (${it.roadClass}) segment ${it.segment} direction ${it.direction}, ${it.along.toFixed(1)} of ${it.segmentLength.toFixed(1)} m; next: ${it.next}; ${it.cause}`,
+      );
+    }
+    if (boundaryIncidentCount > 40) lines.push(`  ... and ${boundaryIncidentCount - 40} more samples`);
     lines.push(`building intersections: ${incidentCount} samples from ${offenders.size} different vehicles${offenders.size ? ` (vehicles ${[...offenders].sort((x, y) => x - y).join(", ")})` : ""}`);
     const causes: Record<string, number> = {};
     for (const it of incidents) causes[it.cause[0]!] = (causes[it.cause[0]!] ?? 0) + 1;
@@ -266,7 +376,8 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
       );
     }
     if (incidents.length > 40) lines.push(`  ... and ${incidentCount - 40} more samples`);
-    return { problems, placed, usableRoads: traffic.roads.length, moved, incidents, incidentCount, vehiclesInBuildings: [...offenders], safety, lines };
+    const travelled = cars.filter((c, i) => c.active && driven[i]! > 10).length;
+    return { travelled, boundaryIncidents, boundaryIncidentCount, vehiclesOutside: [...outsiders], vehiclesCentreOutside: [...centreOutsiders], problems, placed, usableRoads: traffic.roads.length, moved, incidents, incidentCount, vehiclesInBuildings: [...offenders], safety, lines };
   } finally {
     game.dispose();
     kb.input.dispose();
