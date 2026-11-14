@@ -128,6 +128,8 @@ describe.skipIf(!present)("real Alpha 1 district file", () => {
       expect(report.problems).toEqual([]);
       expect(report.vehiclesInBuildings, "vehicles whose centre or body entered a building").toEqual([]);
       expect(report.vehiclesOutside, "vehicles whose centre or body left the district").toEqual([]);
+      expect(report.vehiclesInCollisions, "vehicles whose body overlapped another vehicle's").toEqual([]);
+      expect(report.safety.removals, "vehicles removed because no safe position existed").toBe(0);
       expect(report.travelled, "vehicles that drove more than 10 m").toBe(report.placed);
       expect(report.usableRoads).toBeGreaterThan(0);
       expect(report.placed).toBeGreaterThan(0);

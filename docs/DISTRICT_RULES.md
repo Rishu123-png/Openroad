@@ -246,3 +246,120 @@ rendered map and the player are unaffected.
 
 Limitation: the boundary used is the rectangle `bounds`, which is what the
 tests measure against. It is not the sector outline polygon.
+
+## Traffic at junctions and between vehicles
+
+Code: `apps/web/src/game/traffic/junctions.ts` (finding junctions and narrow
+stretches, the body overlap test) and `TrafficModel.ts` (everything that moves
+a vehicle). Settings are in `TRAFFIC`.
+
+### What a junction is
+
+A point where **three or more** road segments that traffic can drive meet.
+A point in the middle of one road (a bend), two roads joined end to end, and
+a dead end are not junctions. Segments excluded from traffic and repeated
+points do not count. Each junction has an id `junction@x,z`, its arms sorted
+by compass bearing, and a circular **conflict area**: the widest arm's half
+width plus 1.5 m, between 4.5 m and 10 m.
+
+Each vehicle decides what it will do at the next junction when the junction
+first comes into view (straight on 60 % of the time where it can, otherwise
+a turn chosen at random), and keeps that plan. The plan gives the arm it
+enters by, the arm it leaves by, and so the movement: straight, left, right,
+U-turn.
+
+### Priority policy
+
+1. **A reservation is needed to enter the conflict area.** A vehicle without
+   one stops with its front 0.5 m short of the area.
+2. **Arrival.** A vehicle has arrived when it is within 6 m of its stopping
+   place. From then it asks to enter on every frame.
+3. **It is refused** while any of these holds, in this order:
+   - `junction-occupied`: a vehicle on a conflicting movement holds a reservation;
+   - `another-vehicle-has-priority`: a waiting vehicle on a conflicting movement arrived earlier.
+     Vehicles that arrive in the same frame go in the order of their approach arm
+     (by bearing, west first, then north, east, south), then by vehicle number;
+   - `vehicle-ahead` / `player-ahead`: it is not the first in its queue;
+   - `exit-not-clear`: there is not room beyond the junction for all of it
+     (its length and 3 m), so it would stop across the junction;
+   - `narrow-road-occupied`: its exit is a road too narrow to pass on and something is coming along it.
+4. **Conflicts.** Two movements may hold the junction together only when
+   they enter by the same arm (one follows the other), or when they are the
+   two directions of one straight route and both roads are wide enough to
+   pass on. Everything else conflicts, including turns that only merge.
+5. **Release.** The reservation is given up when the vehicle's body has
+   left the conflict area on the far side.
+6. A vehicle whose own exit is blocked does not hold up vehicles that
+   arrived after it.
+
+There are no signals, signs or major and minor roads in this policy: it is
+first come, first served, like an unmarked junction.
+
+### Slowing and following
+
+- A vehicle slows for a junction ahead as if braking at 2.5 m/s² down to
+  4 m/s at the stopping place, and crosses at 4 m/s.
+- It looks along **its own lane path** (through bends and through its
+  planned turn), not straight ahead, for other vehicles and the player. Its
+  speed is 0.4 /s times the room left beyond a 2.5 m bumper gap, which never
+  asks for more than the 6 m/s² braking limit.
+- Sizes and headings are real: how far another body reaches across and
+  along the path is worked out from its length, width and heading.
+
+### Bodies never overlap
+
+Before a vehicle is moved, the rectangle of its body at the new position
+(real length, width and heading, 0.15 m wider on every side) is tested
+against every other vehicle's and the player's. If it would overlap, the
+vehicle is not moved: it goes back to where it was on the road, stopped.
+Vehicles are updated one at a time, so no pair can end a frame overlapping.
+This is the guarantee; the reservations and the following rule exist so
+that it is rarely needed (`junctionStats.blockedMoves` counts when it is).
+
+### Roads too narrow to pass on
+
+Where the two lanes of a two-way road are closer together than a vehicle is
+wide plus 0.3 m (a narrow road, or lanes moved toward the centre line to
+clear a building), two vehicles cannot pass. Such segments are grouped into
+**narrow stretches** (`traffic.narrowRuns`), ended by junctions. A vehicle
+waits before the stretch, where the road is still wide, until nothing in it
+is coming the other way, and not ahead of a vehicle that has waited longer
+at the other end. A stretch ending in a dead end or at the district's edge
+takes one vehicle at a time.
+
+### Waiting too long: recovery, in order
+
+| After | What the vehicle does |
+|---|---|
+| 2.5 s nose to nose with another vehicle (plus 0.25 s per vehicle number modulo 8, so one of a pair goes first) | turns round where it stands, if the opposite lane is clear; it will not turn round again for 12 s |
+| 15 s stopped at a junction | chooses a different exit, keeping its place in the order |
+| 30 s stopped behind a vehicle or the player (45 s waiting for a narrow road) | turns round |
+| 60 s without moving, and more than 30 m from the player | taken out and placed again elsewhere (`junctionStats.stuckReplacements`). The last resort, and never used to hide a collision: a vehicle that cannot move safely does not move |
+
+### Diagnostics
+
+Nothing is printed in the browser. With `?inspect`, `window.openroad` gives
+the game; on `traffic`:
+
+- `junctions`, `narrowRuns`: what was found.
+- `junctionStatus()`: for each junction in use, who holds it (vehicle,
+  approach, movement) and who waits (vehicle, approach, movement, seconds
+  waited, reason, which vehicle it waits for).
+- `events`: the newest 200 yields, entries, forced entries, changes of
+  exit, U-turns, refused moves and replacements, each with time, vehicle,
+  junction id, approach, movement, reason, the other vehicle and the wait.
+- `junctionStats`: totals, and the longest wait.
+- on each vehicle: `yield` (why it is holding back now) and `blockedBy`.
+
+### Limitations
+
+- Two junctions closer together than a vehicle can stop between are not
+  treated as one. A vehicle that finds itself inside the second is let
+  through (`forcedEntries`) under the body check alone.
+- Turning vehicles always wait for the whole junction, even where a left
+  turn would not cross anything. Throughput is lower than a real junction's.
+- A refused move stops the vehicle at once, which is not how a car brakes.
+- Turning round is done on the spot, in the vehicle's own length.
+- The player is not controlled: the player can drive into traffic. Traffic
+  will not drive into the player.
+- No signals, signs, roundabout rules or lane choice.

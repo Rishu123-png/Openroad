@@ -3,6 +3,7 @@ import { DistrictGame } from "../../src/game/engine/DistrictGame";
 import { pointInPolygons } from "../../src/game/district/spawn";
 import type { DistrictBuilding, DistrictData } from "../../src/game/district/types";
 import { TRAFFIC, type TrafficCar, type TrafficModel } from "../../src/game/traffic/TrafficModel";
+import { bodiesOverlap } from "../../src/game/traffic/junctions";
 import { footprintHit, footprintOutside } from "../../src/game/traffic/roadSafety";
 import { keyboard, memory } from "./harness";
 
@@ -181,7 +182,72 @@ export function describeBoundaryIncident(traffic: TrafficModel, bounds: District
   };
 }
 
+/** Two vehicles whose bodies overlap in one frame. */
+export interface VehicleCollision {
+  frame: number;
+  seconds: number;
+  /** Metres from the nearest junction's middle, and its id; null when the district has none. */
+  junction: string | null;
+  junctionDistance: number;
+  cars: [VehicleSnapshot, VehicleSnapshot];
+}
+export interface VehicleSnapshot {
+  car: number;
+  x: number;
+  z: number;
+  heading: number;
+  speed: number;
+  length: number;
+  width: number;
+  roadId: string;
+  segment: number;
+  direction: 1 | -1;
+  /** What the model says the vehicle was doing: holding a junction, waiting, and why. */
+  holding: string[];
+  waitingAt: string | null;
+  yieldReason: string | null;
+  blockedBy: number;
+  framesSincePlaced: number;
+}
+
+function snapshot(traffic: TrafficModel, c: TrafficCar, i: number, framesSincePlaced: number): VehicleSnapshot {
+  return {
+    car: i, x: c.x, z: c.z, heading: c.heading, speed: c.speed, length: c.length, width: c.width, roadId: traffic.roads[c.road]!.id, segment: traffic.segmentOf(c), direction: c.dir,
+    holding: c.holds.map((h) => traffic.junctions[h]!.id), waitingAt: c.junction >= 0 ? traffic.junctions[c.junction]!.id : null, yieldReason: c.yield, blockedBy: c.blockedBy, framesSincePlaced,
+  };
+}
+
+/** Every pair of active vehicles whose bodies overlap now: full rectangles, real sizes and headings, no margin. */
+export function vehicleCollisions(traffic: TrafficModel, frame: number, framesSincePlaced: (car: number) => number = () => -1): VehicleCollision[] {
+  const out: VehicleCollision[] = [];
+  const cars = traffic.cars;
+  for (let i = 0; i < cars.length; i++) {
+    const a = cars[i]!;
+    if (!a.active) continue;
+    for (let j = i + 1; j < cars.length; j++) {
+      const b = cars[j]!;
+      if (!b.active || !bodiesOverlap(a.x, a.z, a.heading, a.length, a.width, b.x, b.z, b.heading, b.length, b.width)) continue;
+      let junction: string | null = null, junctionDistance = Infinity;
+      for (const jn of traffic.junctions) {
+        const dist = Math.hypot(jn.x - (a.x + b.x) / 2, jn.z - (a.z + b.z) / 2);
+        if (dist < junctionDistance) {
+          junctionDistance = dist;
+          junction = jn.id;
+        }
+      }
+      out.push({ frame, seconds: frame / 30, junction, junctionDistance, cars: [snapshot(traffic, a, i, framesSincePlaced(i)), snapshot(traffic, b, j, framesSincePlaced(j))] });
+    }
+  }
+  return out;
+}
+
 export interface TrafficReport {
+  /** Frames in which two vehicle bodies overlapped (first 200), the number of such frame-pairs, and the vehicles involved. */
+  collisions: VehicleCollision[];
+  collisionCount: number;
+  vehiclesInCollisions: number[];
+  /** Junction handling during the run. */
+  junctions: { count: number; entries: number; yields: number; forcedEntries: number; replans: number; uTurns: number; blockedMoves: number; stuckReplacements: number; longestWait: number };
   /** Every sample where a vehicle's centre or body was outside the district (first 200). */
   boundaryIncidents: BoundaryIncident[];
   boundaryIncidentCount: number;
@@ -272,6 +338,9 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
   const incidents: TrafficIncident[] = [];
   const offenders = new Set<number>();
   let incidentCount = 0;
+  const collisions: VehicleCollision[] = [];
+  const colliders = new Set<number>();
+  let collisionCount = 0;
   const boundaryIncidents: BoundaryIncident[] = [];
   const outsiders = new Set<number>(), centreOutsiders = new Set<number>();
   let boundaryIncidentCount = 0;
@@ -323,6 +392,13 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
           offenders.add(i);
           if (incidents.length < 200) incidents.push(describeIncident(traffic, index, c, i, frame, body, Boolean(centre)));
         }
+      }
+      for (const hit of vehicleCollisions(traffic, frame, (car) => frame - placedAt[car]!)) {
+        report("frames in which two vehicle bodies overlap");
+        collisionCount++;
+        colliders.add(hit.cars[0].car);
+        colliders.add(hit.cars[1].car);
+        if (collisions.length < 200) collisions.push(hit);
       }
       cars.forEach((c, i) => {
         last[i]![0] = c.x;
@@ -376,8 +452,19 @@ export function trafficReport(engine: NullEngine, d: DistrictData, seconds = 60)
       );
     }
     if (incidents.length > 40) lines.push(`  ... and ${incidentCount - 40} more samples`);
+    const js = traffic.junctionStats;
+    const junctions = { count: traffic.junctions.length, ...js, longestWait: Math.round(js.longestWait * 10) / 10 };
+    lines.push(`junctions: ${junctions.count} (points where 3 or more drivable segments meet); entries ${js.entries}; yields ${js.yields}; longest wait ${junctions.longestWait} s; entries let through because the vehicle was already inside ${js.forcedEntries}`);
+    lines.push(`  recoveries: chose another exit ${js.replans}; turned round ${js.uTurns}; moves refused by the body check ${js.blockedMoves}; vehicles taken out after ${TRAFFIC.stuckSeconds} s without moving ${js.stuckReplacements}`);
+    for (const e of traffic.events.filter((x) => x.kind === "stuck-replaced" || x.kind === "forced-entry").slice(-10)) lines.push(`  ${e.kind}: vehicle ${e.car} at ${e.time.toFixed(1)} s${e.junction ? `, ${e.junction}, ${e.approach}, ${e.movement}` : ""}: ${e.reason}`);
+    lines.push(`vehicle collisions: ${collisionCount} frame-pairs from ${colliders.size} different vehicles${colliders.size ? ` (vehicles ${sorted(colliders)})` : ""}`);
+    const snap = (v: VehicleSnapshot): string =>
+      `vehicle ${v.car} [${v.x.toFixed(2)}, ${v.z.toFixed(2)}] heading ${v.heading.toFixed(2)} rad, ${v.speed.toFixed(1)} m/s, ${v.length} x ${v.width} m, ${v.roadId} segment ${v.segment} direction ${v.direction}, ` +
+      `${v.holding.length ? `holding ${v.holding.join(" and ")}` : v.waitingAt ? `waiting at ${v.waitingAt}` : "no junction"}${v.yieldReason ? `, ${v.yieldReason}${v.blockedBy >= 0 ? ` (vehicle ${v.blockedBy})` : ""}` : ""}, ${v.framesSincePlaced} frames after placement`;
+    for (const hit of collisions.slice(0, 20)) lines.push(`  at ${hit.seconds.toFixed(2)} s (frame ${hit.frame}), ${hit.junction ? `${hit.junctionDistance.toFixed(1)} m from ${hit.junction}` : "no junction in the district"}: ${snap(hit.cars[0])} AND ${snap(hit.cars[1])}`);
+    if (collisionCount > 20) lines.push(`  ... and ${collisionCount - 20} more frame-pairs`);
     const travelled = cars.filter((c, i) => c.active && driven[i]! > 10).length;
-    return { travelled, boundaryIncidents, boundaryIncidentCount, vehiclesOutside: [...outsiders], vehiclesCentreOutside: [...centreOutsiders], problems, placed, usableRoads: traffic.roads.length, moved, incidents, incidentCount, vehiclesInBuildings: [...offenders], safety, lines };
+    return { collisions, collisionCount, vehiclesInCollisions: [...colliders], junctions, travelled, boundaryIncidents, boundaryIncidentCount, vehiclesOutside: [...outsiders], vehiclesCentreOutside: [...centreOutsiders], problems, placed, usableRoads: traffic.roads.length, moved, incidents, incidentCount, vehiclesInBuildings: [...offenders], safety, lines };
   } finally {
     game.dispose();
     kb.input.dispose();

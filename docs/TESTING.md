@@ -82,3 +82,25 @@ vehicle in a building, and every vehicle to drive more than 10 m.
 
 Synthetic regression tests are in `apps/web/tests/trafficBoundary.test.ts`
 with the fixture `tests/fixtures/edgeDistrict.ts`.
+
+### Junctions and vehicle collisions
+
+`apps/web/tests/trafficJunctions.test.ts` (synthetic, scripted with
+`traffic.place()` and `traffic.route()`, fixtures in
+`tests/fixtures/junctionDistrict.ts`) covers: finding junctions; two
+vehicles on conflicting approaches, for every pair of approaches and turns;
+exact and near ties; yielding and proceeding; turns across traffic; eight
+vehicles from four sides; following; exits; a junction that stays blocked;
+narrow roads; and whole districts with 40 vehicles where every pair of
+bodies is tested on every frame.
+
+`trafficReport` (used by the real-data suite) now tests every pair of
+vehicle bodies on every frame with `vehicleCollisions()`: full rectangles,
+real sizes and headings, no margin. Each overlap is printed in the
+`REAL DATA` lines with both vehicles' positions, headings, speeds, roads,
+junction state and yield reason, and the nearest junction. It also prints
+junction totals and every recovery. The real suite requires no collision
+and no safety removal.
+
+`experience.test.ts` "does not run cars into each other" checks every pair
+everywhere again, junctions included, by centre distance and by body.

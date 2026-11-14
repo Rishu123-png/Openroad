@@ -10,6 +10,7 @@ import type { DistrictRoad } from "../src/game/district/types";
 import { DistrictGame, QUALITY, SETTING_KEYS, type GarageState, type Settings } from "../src/game/engine/DistrictGame";
 import { GeometryBuffer } from "../src/game/geometry/GeometryBuffer";
 import type { MaterialKey } from "../src/game/materials/MaterialLibrary";
+import { bodiesOverlap } from "../src/game/traffic/junctions";
 import { TRAFFIC, TrafficModel } from "../src/game/traffic/TrafficModel";
 import { buildCarGeometry } from "../src/game/vehicle/models/carGeometry";
 import { CarFactory } from "../src/game/vehicle/models/CarVisual";
@@ -244,13 +245,19 @@ describe("traffic", () => {
 
   it("does not run cars into each other", () => {
     const { traffic } = model(10);
-    let closest = Infinity;
+    let closest = Infinity, overlaps = 0;
     run(traffic, 60, () => {
-      // Away from the two junctions, at (0, 0) and (0, 100): traffic has no right of way rule, so vehicles on
-      // crossing roads can pass through each other there. That is a known limitation, not what this test is about.
-      const cars = traffic.cars.filter((c) => c.active && Math.hypot(c.x, c.z) > 12 && Math.hypot(c.x, c.z - 100) > 12);
-      for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) closest = Math.min(closest, Math.hypot(cars[i]!.x - cars[j]!.x, cars[i]!.z - cars[j]!.z));
+      // Every pair, everywhere, junctions included: by distance between centres, and by the bodies themselves.
+      const cars = traffic.cars.filter((c) => c.active);
+      for (let i = 0; i < cars.length; i++) {
+        for (let j = i + 1; j < cars.length; j++) {
+          const a = cars[i]!, b = cars[j]!;
+          closest = Math.min(closest, Math.hypot(a.x - b.x, a.z - b.z));
+          if (bodiesOverlap(a.x, a.z, a.heading, a.length, a.width, b.x, b.z, b.heading, b.length, b.width)) overlaps++;
+        }
+      }
     });
+    expect(overlaps).toBe(0);
     expect(closest).toBeGreaterThan(2);
   });
 });

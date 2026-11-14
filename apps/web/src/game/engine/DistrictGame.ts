@@ -285,7 +285,8 @@ export class DistrictGame extends GameBase {
     const px = v.x, pz = v.z;
     v.update(c, deltaSeconds);
 
-    this.traffic.update(deltaSeconds, v.x, v.z);
+    const body = this.selectedVehicle;
+    this.traffic.update(deltaSeconds, v.x, v.z, { heading: v.heading, length: body.length, width: body.width });
     const cars = this.traffic.cars;
     for (let i = 0; i < cars.length; i++) {
       const car = cars[i]!;
