@@ -44,6 +44,8 @@ export interface DistrictRoad {
   class: string;
   name: string | null;
   oneway: boolean;
+  /** Mapped or estimated lane count; null when neither is known. */
+  lanes?: number | null;
   width: number;
   widthStatus: WidthStatus;
   widthBasis: string;

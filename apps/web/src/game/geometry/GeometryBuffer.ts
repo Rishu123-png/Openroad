@@ -341,6 +341,11 @@ export class GeometryBuffer {
     this.quad([[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [nx, 0, nz], [u0, y0, u1, y0, u1, y1, u0, y1], color);
   }
 
+  /** A vertical wall with explicit texture coordinates, so a facade pattern can be fitted to it. */
+  wallUV(ax: number, az: number, bx: number, bz: number, y0: number, y1: number, nx: number, nz: number, color: Color, u0: number, u1: number, v0: number, v1: number): void {
+    this.quad([[ax, y0, az], [bx, y0, bz], [bx, y1, bz], [ax, y1, az]], [nx, 0, nz], [u0, v0, u1, v0, u1, v1, u0, v1], color);
+  }
+
   /** Creates the mesh. The buffer can be discarded afterwards. */
   toMesh(name: string, scene: Scene): Mesh {
     const mesh = new Mesh(name, scene);

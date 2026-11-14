@@ -8,9 +8,12 @@ import { GeometryBuffer, type Color } from "../geometry/GeometryBuffer";
 import { createMaterialLibrary, type MaterialKey, type MaterialLibrary } from "../materials/MaterialLibrary";
 import { streetLight } from "../world/furniture";
 import { srgb } from "../world/layout";
-import { broadTree } from "../world/vegetation";
+import { broadTree, columnarTree } from "../world/vegetation";
+import { CarFactory, type CarVisual } from "../vehicle/models/CarVisual";
+import { TRAFFIC_CARS, TRAFFIC_PAINTS } from "../vehicle/models/carSpecs";
 import { BuildingIndex } from "./BuildingIndex";
-import { extrudeFootprint } from "./buildingGeometry";
+import { BUILDING_LAYERS, dressBuilding } from "./buildingGeometry";
+import { addJunctionMarkings, addLaneMarkings, addSpeedBreaker } from "./roadMarkings";
 import { DebugViews, type DebugTints, type TintRange } from "./DebugViews";
 import { placeDecorations, type Decoration } from "./decorations";
 import { addDisc, addStrip } from "./roadGeometry";
@@ -21,7 +24,7 @@ import type { BuildingCategory, DistrictData, HeightStatus, WidthStatus } from "
 const TILE = 250;
 
 /** Heights of flat surfaces above the ground, in metres. Materials also carry a depth offset, so these can stay small. */
-const Y = { green: 0.01, path: 0.02, road: 0.03, sidewalk: 0.15 } as const;
+const Y = { green: 0.012, shoulder: 0.015, path: 0.02, road: 0.03, paint: 0.036, sidewalk: 0.15 } as const;
 
 /**
  * Assumptions the map data does not settle. Each is used only where noted
@@ -39,18 +42,26 @@ export const DISTRICT_ASSUMPTIONS = {
   railWidth: 3.2,
   /** Spacing of the generated piers under elevated rail. */
   pierSpacing: 30,
+  /** Paved margin drawn beside a carriageway: wider on the main roads. */
+  shoulder: { main: 1.2, minor: 0.5 },
+  mainClasses: ["trunk", "primary", "secondary", "tertiary"] as readonly string[],
 } as const;
 
-/** Muted wall colours by category. They tell categories apart; they are not the colours of the real buildings. */
-const WALL: Record<BuildingCategory, Color> = {
-  house: srgb(226, 216, 196),
-  apartments: srgb(214, 206, 198),
-  commercial: srgb(196, 204, 212),
-  institutional: srgb(222, 202, 176),
-  industrial: srgb(184, 188, 192),
-  healthcare: srgb(232, 232, 228),
-  other: srgb(196, 190, 180),
-  unclassified: srgb(208, 204, 196),
+/**
+ * Wall tints. Residential and unknown buildings draw from a set of common
+ * plaster colours; the rest have one muted colour per category. They make
+ * streets varied; they are not the colours of the real buildings.
+ */
+const PLASTER_TINTS: Color[] = [srgb(238, 230, 212), srgb(228, 216, 192), srgb(242, 238, 230), srgb(224, 208, 188), srgb(216, 222, 214), srgb(234, 216, 202), srgb(212, 216, 224), srgb(232, 224, 196)];
+const WALL: Record<BuildingCategory, Color | null> = {
+  house: null,
+  apartments: null,
+  commercial: srgb(214, 216, 220),
+  institutional: srgb(228, 212, 190),
+  industrial: srgb(186, 190, 194),
+  healthcare: srgb(236, 236, 232),
+  other: srgb(198, 192, 182),
+  unclassified: null,
 };
 
 const DEBUG_CATEGORY: Record<BuildingCategory, Color> = {
@@ -84,6 +95,8 @@ export interface DistrictWorld {
   shadowCasters: AbstractMesh[];
   /** Named counts for tests and the overlay. `generated*` entries are decoration, not map data. */
   counts: Record<string, number>;
+  /** Shared vehicle meshes and materials. */
+  cars: CarFactory;
   /** Building walls and mapped barriers, for collision. */
   obstacles: SegmentGrid;
   /** Carriageways and paths, for "is the vehicle on a mapped road". */
@@ -113,6 +126,8 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
   materials.grass.zOffset = -1;
   materials.pavers.zOffset = -2;
   materials.asphalt.zOffset = -3;
+  materials.roadPaint.zOffset = -5;
+  materials.grate.zOffset = -5;
 
   const counts: Record<string, number> = {};
   const add = (name: string, by = 1): void => void (counts[name] = (counts[name] ?? 0) + by);
@@ -136,7 +151,18 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
   const buildingIndex = new BuildingIndex(district.buildings);
 
   // ---- ground: unmapped land is one plain surface, extended past the edge so the horizon is not a cliff
-  draw(at("concrete", b.minX, b.minZ), null, (g) => g.rectY(b.minX - 600, b.minZ - 600, b.maxX + 600, b.maxZ + 600, 0, { color: srgb(196, 184, 160) }));
+  // Dry, dusty ground with gentle variation, so open land is not one flat colour.
+  const groundBuffer = new GeometryBuffer();
+  groundBuffer.rectY(b.minX - 600, b.minZ - 600, b.maxX + 600, b.maxZ + 600, 0, {
+    cell: 40,
+    tint: (x, z) => {
+      const k = 0.9 + 0.2 * (0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.007) * 2) * Math.cos(z * 0.013));
+      return [1.02 * k, 0.94 * k, 0.8 * k]; // drier and duller than the mapped parks
+    },
+  });
+  // Its own material: the same texture as grass, but without the depth offset the mapped green areas use to sit on top of it.
+  const groundMaterial = materials.grass.clone("groundMaterial");
+  groundMaterial.zOffset = 0;
 
   // ---- mapped areas
   for (const area of district.areas) {
@@ -151,6 +177,9 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
   }
 
   // ---- roads and paths
+  const A = DISTRICT_ASSUMPTIONS;
+  const junctionZones = new SegmentGrid(32, 1);
+  for (const j of district.junctions) if (j.arms >= 3) junctionZones.add(j.point[0], j.point[1], j.point[0], j.point[1], j.radius + 2.5);
   for (const road of district.roads) {
     for (let i = 1; i < road.points.length; i++) {
       const p = road.points[i - 1]!, q = road.points[i]!;
@@ -164,8 +193,12 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
       add("paths");
       continue;
     }
-    const shade = road.class === "service" ? 1.12 : 1;
+    // Subtle variation between roads: resurfaced at different times.
+    const shade = (road.class === "service" ? 1.12 : 1) * (0.92 + idNoise(road.id) * 0.14);
     draw(at("asphalt", first[0], first[1]), [DARK, DARK, DEBUG_WIDTH[road.widthStatus]], (g) => addStrip(g, road.points, half, -half, Y.road, [shade, shade, shade]));
+    // Road edge: a paved margin under the asphalt. Generated; its width is a rule, not data.
+    const margin = A.mainClasses.includes(road.class) ? A.shoulder.main : A.shoulder.minor;
+    draw(at("pavers", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => addStrip(g, road.points, half + margin, -half - margin, Y.shoulder, [0.66, 0.63, 0.6]));
     add("roads");
     // Footpaths only where the road itself is tagged as having them.
     const w = DISTRICT_ASSUMPTIONS.sidewalkWidth;
@@ -184,15 +217,33 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     add(j.arms >= 3 ? "intersections" : "roadJoints");
   }
 
+  // ---- generated road markings (roadMarkings.ts): by rule from class and lane count, never from mapped paint
+  for (const road of district.roads) {
+    const first = road.points[0]!;
+    draw(at("roadPaint", first[0], first[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => add("generatedLaneLines", addLaneMarkings(g, road, Y.paint, junctionZones)));
+  }
+  for (const j of district.junctions) {
+    draw(at("roadPaint", j.point[0], j.point[1]), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+      const [stops, crossings] = addJunctionMarkings(g, j, district.roads, Y.paint);
+      add("generatedStopLines", stops);
+      add("generatedCrossings", crossings);
+    });
+  }
+
   // ---- buildings: one extrusion per mapped footprint
   for (const building of district.buildings) {
-    const base = WALL[building.category];
-    const k = 0.94 + idNoise(building.id) * 0.1; // slight variation so neighbours differ
+    const base = WALL[building.category] ?? PLASTER_TINTS[Math.floor(idNoise(`${building.id}c`) * PLASTER_TINTS.length)]!;
+    const k = 0.95 + idNoise(building.id) * 0.08; // slight variation so neighbours differ
     const wall: Color = [base[0] * k, base[1] * k, base[2] * k];
-    const roof: Color = [wall[0] * 0.62, wall[1] * 0.62, wall[2] * 0.62];
-    draw(at("plaster", building.centre[0], building.centre[1]), [DEBUG_CATEGORY[building.category], DEBUG_HEIGHT[building.heightStatus], OSM_BLUE], (g) =>
-      extrudeFootprint(g, building.polygons, 0, building.height, wall, roof),
-    );
+    const roof: Color = [0.62 * k, 0.6 * k, 0.57 * k];
+    const tints: DebugTints = [DEBUG_CATEGORY[building.category], DEBUG_HEIGHT[building.heightStatus], OSM_BLUE];
+    const [cx, cz] = building.centre;
+    const before = BUILDING_LAYERS.map((layer) => at(layer, cx, cz).buffer.vertexCount);
+    add("generatedBalconies", dressBuilding((layer) => at(layer, cx, cz).buffer, building, wall, roof));
+    BUILDING_LAYERS.forEach((layer, i) => {
+      const batch = at(layer, cx, cz);
+      if (batch.buffer.vertexCount > before[i]!) batch.ranges.push({ start: before[i]!, count: batch.buffer.vertexCount - before[i]!, tints });
+    });
     for (const polygon of building.polygons) {
       for (const ring of [polygon.outer, ...polygon.holes]) {
         for (let i = 1; i < ring.length; i++) obstacles.add(ring[i - 1]![0], ring[i - 1]![1], ring[i]![0], ring[i]![1], 0);
@@ -205,7 +256,6 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
 
   // ---- mapped barriers: walls with an opening at each mapped gate and wherever a mapped road passes through
   const gates = district.barriers.points;
-  const A = DISTRICT_ASSUMPTIONS;
   for (const line of district.barriers.lines) {
     const kind = line.kind ?? "";
     const defaultHeight = A.barrierHeight[kind];
@@ -306,13 +356,19 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     const inst = mesh.createInstance(name);
     inst.position.set(x, 0, z);
     inst.rotation.y = yaw;
-    inst.scaling.setAll(scale);
+    // Trees: narrower or wider and shorter or taller by a hash of the name, so no two look alike.
+    const vary = mesh.material === materials.foliage ? 0.86 + idNoise(name) * 0.28 : 1;
+    inst.scaling.set(scale * vary, scale * (2 - vary) * (mesh.material === materials.foliage ? 0.92 : 1), scale * vary);
     inst.isPickable = false;
     inst.freezeWorldMatrix();
     if (castsShadow) casters.push(inst);
   };
-  const treeSeeds = [101, 102, 103];
-  const trees = (prefix: string, debugMaterial: PBRMaterial): Mesh[] => treeSeeds.map((s) => template(`${prefix}Tree${s}`, broadTree(s, 1), broadTree(s, 0.5), materials.foliage, debugMaterial, 620));
+  // Five shade trees and one columnar tree; instances are scaled unevenly so repeats are hard to spot.
+  const treeSeeds = [101, 102, 103, 104, 105];
+  const trees = (prefix: string, debugMaterial: PBRMaterial): Mesh[] => [
+    ...treeSeeds.map((s) => template(`${prefix}Tree${s}`, broadTree(s, 1), broadTree(s, 0.5), materials.foliage, debugMaterial, 620)),
+    template(`${prefix}Tree201`, columnarTree(201, 1), columnarTree(201, 0.5), materials.foliage, debugMaterial, 620),
+  ];
   const mappedTrees = trees("mapped", debugMapped);
   const generatedTrees = trees("generated", debugGenerated);
   const mappedLamp = template("mappedLamp", streetLight(), null, materials.metal, debugMapped, 400);
@@ -337,18 +393,45 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
 
   // ---- generated decoration (see decorations.ts)
   const decorations = placeDecorations(district, obstacles, roadSurfaces, buildingIndex);
+  const cars = new CarFactory(scene);
+  const parkedCars: CarVisual[] = [];
   decorations.forEach((d, i) => {
     if (d.kind === "tree") {
-      instance(generatedTrees[i % generatedTrees.length]!, `generatedTree_${i}`, d.x, d.z, d.yaw, d.scale, true);
+      // Street trees are kept modest: about 6 to 9 m, the size of a maturing neem.
+      instance(generatedTrees[i % generatedTrees.length]!, `generatedTree_${i}`, d.x, d.z, d.yaw, d.scale * 0.82, true);
       add("generatedTrees");
-    } else {
+    } else if (d.kind === "streetLight") {
       instance(generatedLamp, `generatedLamp_${i}`, d.x, d.z, d.yaw, d.scale, false);
       add("generatedLights");
+    } else if (d.kind === "grate") {
+      draw(at("grate", d.x, d.z), [DARK, DARK, GENERATED_MAGENTA], (g) => {
+        const s = Math.sin(d.yaw) * 0.3, c = Math.cos(d.yaw) * 0.3;
+        g.quad([[d.x - s - c, Y.paint, d.z - c + s], [d.x + s - c, Y.paint, d.z + c + s], [d.x + s + c, Y.paint, d.z + c - s], [d.x - s + c, Y.paint, d.z - c - s]], [0, 1, 0], [0, 0, 0.6, 0, 0.6, 0.6, 0, 0.6]);
+      });
+      add("generatedGrates");
+    } else {
+      const v = d.variant ?? 0;
+      const car = cars.create(TRAFFIC_CARS[v % TRAFFIC_CARS.length]!, `parkedCar_${i}`, TRAFFIC_PAINTS[(v >> 2) % TRAFFIC_PAINTS.length]!);
+      car.place(d.x, 0.02, d.z, d.yaw);
+      for (const mesh of car.root.getChildMeshes()) {
+        mesh.computeWorldMatrix(true);
+        mesh.freezeWorldMatrix();
+      }
+      parkedCars.push(car);
+      add("generatedParkedCars");
     }
   });
 
+  // Mapped traffic calming: a painted hump across the nearest road. None are invented.
+  for (const item of district.furniture) {
+    if (!item.tags.traffic_calming) continue;
+    draw(at("roadPaint", item.point[0], item.point[1]), mapped(), (g) => {
+      if (addSpeedBreaker(g, item.point[0], item.point[1], district.roads, Y.paint + 0.004)) add("mappedSpeedBreakers");
+    });
+  }
+
   // ---- meshes
-  const castsShadow = new Set<MaterialKey>(["plaster"]);
+  const castsShadow = new Set<MaterialKey>(["plaster", "residential", "generic", "ribbon", "shopfront"]);
   for (const [key, batch] of batches) {
     if (batch.buffer.isEmpty) continue;
     const mesh = batch.buffer.toMesh(key, scene);
@@ -361,6 +444,13 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     add("staticMeshes");
   }
 
+  const ground = groundBuffer.toMesh("ground", scene);
+  ground.material = groundMaterial;
+  ground.receiveShadows = true;
+  ground.freezeWorldMatrix();
+  debug.addBatched(ground, []);
+  counts.parkedCars = parkedCars.length;
+
   // The sector outline, shown only in the "Data source" view.
   const outline = new GeometryBuffer();
   for (const polygon of district.sector.polygons) addStrip(outline, polygon.outer, 1, -1, 0.4, [1, 1, 1]);
@@ -370,5 +460,5 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     debug.addDebugOnly(mesh);
   }
 
-  return { materials, shadowCasters: casters, counts, obstacles, roadSurfaces, buildingIndex, decorations, debug };
+  return { materials, cars, shadowCasters: casters, counts, obstacles, roadSurfaces, buildingIndex, decorations, debug };
 }

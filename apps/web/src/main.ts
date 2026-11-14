@@ -1,16 +1,29 @@
 import { loadDistrict, districtUrl } from "./game/district/loadDistrict";
 import type { DistrictData } from "./game/district/types";
 import { createEngine } from "./game/engine/createEngine";
-import { DistrictGame } from "./game/engine/DistrictGame";
+import { DistrictGame, type Settings } from "./game/engine/DistrictGame";
 import { Game } from "./game/engine/Game";
 import type { GameBase, GameOptions } from "./game/engine/GameBase";
+import { PLAYER_CARS } from "./game/vehicle/models/carSpecs";
 import { KeyboardInput } from "./input/KeyboardInput";
+import { Garage } from "./ui/Garage";
 import { Overlay } from "./ui/Overlay";
 
 /**
  * Composition root: creates the engine, input, UI and game, connects them and
  * guarantees they are torn down together.
  */
+/** localStorage, or nothing when the browser forbids it (private mode, blocked cookies). */
+function browserSettings(): Settings | undefined {
+  try {
+    const store = window.localStorage;
+    store.getItem("openroad.vehicle");
+    return store;
+  } catch {
+    return undefined;
+  }
+}
+
 function boot(district: DistrictData | null): () => void {
   const canvas = document.getElementById("game");
   const uiRoot = document.getElementById("ui");
@@ -39,10 +52,9 @@ function boot(district: DistrictData | null): () => void {
       resizeTarget: window,
       onStats: (stats) => {
         overlay.setStatus(`OPENROAD ${__APP_VERSION__} · ${stats.fps.toFixed(0)} FPS · ${stats.cameraView}`);
-        overlay.setDetail(
-          `${stats.drawCalls} draw calls · ${stats.activeMeshes} meshes · ${(stats.triangles / 1000).toFixed(0)}k triangles`,
-        );
         if (stats.speedKmh !== undefined) overlay.setSpeed(stats.speedKmh, stats.onRoad === false ? "off road" : "");
+        const trafficNote = stats.traffic !== undefined ? ` · ${stats.traffic} traffic` : "";
+        overlay.setDetail(`${stats.drawCalls} draw calls · ${stats.activeMeshes} meshes · ${(stats.triangles / 1000).toFixed(0)}k triangles${trafficNote}`);
         overlay.setLegend(stats.debugLegend ? `${stats.debugView}: ${stats.debugLegend}` : "");
       },
       onContextChange: (lost) => {
@@ -50,15 +62,42 @@ function boot(district: DistrictData | null): () => void {
         else overlay.hideError();
       },
     };
-    const game: GameBase = district ? new DistrictGame({ ...options, district }) : new Game(options);
+    let game: GameBase;
+    if (district) {
+      // The garage panel is created first; the game reports to it as it starts.
+      let districtGame: DistrictGame | null = null;
+      const garage = new Garage(uiRoot, {
+        previous: () => districtGame?.selectVehicle(districtGame.selectedVehicle === PLAYER_CARS[0] ? PLAYER_CARS.length - 1 : PLAYER_CARS.indexOf(districtGame.selectedVehicle) - 1),
+        next: () => districtGame?.selectVehicle(PLAYER_CARS.indexOf(districtGame.selectedVehicle) + 1),
+        drive: () => {
+          districtGame?.closeGarage();
+          canvas.focus();
+        },
+        quality: (value) => districtGame?.setQuality(value),
+      });
+      disposers.push(() => garage.dispose());
+      const traffic = Number(new URLSearchParams(window.location.search).get("traffic") ?? NaN);
+      districtGame = new DistrictGame({
+        ...options,
+        district,
+        settings: browserSettings(),
+        trafficCount: Number.isFinite(traffic) ? traffic : undefined,
+        onGarage: (state) => {
+          if (!state.open) return garage.hide();
+          const v = state.vehicle;
+          garage.show({ name: v.name, klass: v.klass, size: [v.length, v.width, v.height], note: v.basis, index: state.index, total: state.total, quality: state.quality });
+        },
+      });
+      game = districtGame;
+    } else game = new Game(options);
     disposers.push(() => game.dispose());
     // Development aid: inspect the running game from the browser console.
     if (import.meta.env.DEV || new URLSearchParams(window.location.search).has("inspect")) (window as unknown as { openroad?: GameBase }).openroad = game;
 
     if (district) {
-      overlay.setHelp("W/S or ↑/↓: drive, brake, reverse · A/D or ←/→: steer · Space: handbrake · C: camera · V: data views · R: back to start");
+      overlay.setHelp("W/S: drive, brake, reverse · A/D: steer · Space: handbrake · C: camera · G: garage · L: headlights · V: data views · R: back to start");
       if (district.synthetic) overlay.setCredit("SYNTHETIC TEST DATA: an invented layout, not a map of Greater Noida", true);
-      else overlay.setCredit(`${district.name} · ${district.attribution} · building heights and road widths are partly estimated (press V)`);
+      else overlay.setCredit(`${district.name} · ${district.attribution} · heights, widths, facades and markings are partly estimated or generated (press V)`);
     } else {
       overlay.setHelp("Fictional test district · Drag: orbit · Wheel: zoom · C: change view · R: reset view");
       overlay.setCredit("Fictional test district: not a real place", true);

@@ -35,6 +35,7 @@ const CASTS_SHADOW: Record<MaterialKey, boolean> = {
   ribbon: true,
   shopfront: true,
   signs: false,
+  generic: true,
 };
 
 /**

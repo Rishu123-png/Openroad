@@ -18,6 +18,7 @@ import {
   ribbonFacade,
   roadPaintTexture,
   shopfrontFacade,
+  genericFacade,
   signAtlas,
 } from "./proceduralTextures";
 
@@ -36,6 +37,7 @@ export const MATERIAL_KEYS = [
   "ribbon",
   "shopfront",
   "signs",
+  "generic",
 ] as const;
 
 export type MaterialKey = (typeof MATERIAL_KEYS)[number];
@@ -118,6 +120,7 @@ export function createMaterialLibrary(scene: Scene): MaterialLibrary {
     ribbon: pbr(scene, "ribbon", { albedo: ribbonFacade(), tileU: facadeW, tileV: facadeH, roughness: 0.6 }),
     shopfront: pbr(scene, "shopfront", { albedo: shopfrontFacade(), tileU: facadeW, tileV: 4, roughness: 0.6 }),
     signs: pbr(scene, "signs", { albedo: signAtlas(), tileU: 1, roughness: 0.5 }),
+    generic: pbr(scene, "generic", { albedo: genericFacade(), tileU: facadeW, tileV: facadeH, roughness: 0.85 }),
   };
 
   // Markings and grates lie 1 cm above the road; the depth offset stops them flickering far away.

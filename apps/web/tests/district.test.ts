@@ -223,7 +223,7 @@ describe("DistrictGame", () => {
     // Roof area over all building meshes equals the footprints, so no footprint was built twice.
     const heights = new Map(district.buildings.map((b) => [b.height, b]));
     let roofArea = 0;
-    for (const mesh of game.scene.meshes.filter((m) => m.name.startsWith("plaster@"))) {
+    for (const mesh of game.scene.meshes.filter((m) => m.name.startsWith("concrete@"))) {
       const p = mesh.getVerticesData(VertexBuffer.PositionKind)!, n = mesh.getVerticesData(VertexBuffer.NormalKind)!, idx = mesh.getIndices()!;
       for (let i = 0; i < idx.length; i += 3) {
         const [a, b, c] = [idx[i]!, idx[i + 1]!, idx[i + 2]!];
@@ -257,9 +257,9 @@ describe("DistrictGame", () => {
     const { decorations, roadSurfaces, counts } = a.world;
     expect(decorations.length).toBeGreaterThan(5);
     expect(decorations.every((d) => d.generated === true && d.rule.length > 0)).toBe(true);
-    expect(counts.generatedTrees! + counts.generatedLights!).toBe(decorations.length);
+    expect(counts.generatedTrees! + counts.generatedLights! + (counts.generatedGrates ?? 0) + (counts.generatedParkedCars ?? 0)).toBe(decorations.length);
     for (const d of decorations) {
-      expect(roadSurfaces.near(d.x, d.z, 0)).toBe(false);
+      if (d.kind !== "grate") expect(roadSurfaces.near(d.x, d.z, 0)).toBe(false); // grates are part of the road edge
       expect(district.buildings.some((b) => pointInPolygons(d.x, d.z, b.polygons))).toBe(false);
       expect(Math.abs(d.x) < 150 && Math.abs(d.z) < 150).toBe(true);
     }
@@ -287,7 +287,7 @@ describe("DistrictGame", () => {
     for (let i = 0; i < 200; i++) game.vehicle.update({ ...NO_INPUT, accelerate: input.isDown("accelerate") }, 1 / 60);
     frames(game, 2);
     expect(game.vehicle.z).toBeGreaterThan(-35);
-    expect(game.vehicleMesh.position.z).toBeCloseTo(game.vehicle.z);
+    expect(game.playerCar.root.position.z).toBeCloseTo(game.vehicle.z);
     expect(game.vehicle.onRoad).toBe(true);
     key("keyup", "KeyW");
 
@@ -305,7 +305,7 @@ describe("DistrictGame", () => {
 
   it("cycles camera views and data views, and restores the normal look", () => {
     const game = new DistrictGame({ engine, input, district: testDistrict() });
-    const mesh = game.scene.meshes.find((m) => m.name.startsWith("plaster@"))!;
+    const mesh = game.scene.meshes.find((m) => m.name.startsWith("concrete@"))!;
     const normal = Array.from(new Float32Array(mesh.getVerticesData(VertexBuffer.ColorKind)!)); // as stored on the GPU
     const material = mesh.material;
     const names = [game.world.debug.view.name];

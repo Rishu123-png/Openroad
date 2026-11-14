@@ -31,6 +31,8 @@ export interface GameStats {
   onRoad?: boolean;
   debugView?: string;
   debugLegend?: string;
+  /** Moving traffic vehicles. */
+  traffic?: number;
 }
 
 const STATS_INTERVAL_MS = 250;

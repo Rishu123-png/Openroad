@@ -46,6 +46,11 @@ export class VehicleModel {
   speed = 0;
   steer = 0;
   onRoad = true;
+  /** True while the driver is slowing the vehicle: brake lights. */
+  braking = false;
+  /** Set from the chosen vehicle. */
+  wheelbase: number = VEHICLE.wheelbase;
+  collisionOffset: number = VEHICLE.collisionOffset;
 
   constructor(
     private readonly bounds: DistrictBounds,
@@ -75,13 +80,29 @@ export class VehicleModel {
     }
   }
 
+  /**
+   * Keeps the vehicle out of a circle, such as another car. Returns true on contact.
+   */
+  pushAway(x: number, z: number, radius: number): boolean {
+    const dx = this.x - x, dz = this.z - z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= radius * radius || d2 < 1e-9) return false;
+    const d = Math.sqrt(d2);
+    this.x += (dx / d) * (radius - d);
+    this.z += (dz / d) * (radius - d);
+    this.speed = Math.max(-VEHICLE.scrapeSpeed, Math.min(VEHICLE.scrapeSpeed, this.speed));
+    return true;
+  }
+
   private step(input: VehicleInput, dt: number): void {
     const V = VEHICLE;
     const drive = (input.accelerate ? 1 : 0) - (input.brake ? 1 : 0);
     let v = this.speed;
 
+    const slowing = drive !== 0 && Math.sign(v) === -drive && Math.abs(v) > 0.3;
+    this.braking = input.handbrake || slowing;
     if (input.handbrake) v = approach(v, 0, V.handbrake * dt);
-    else if (drive !== 0 && Math.sign(v) === -drive && Math.abs(v) > 0.3) v = approach(v, 0, V.braking * dt);
+    else if (slowing) v = approach(v, 0, V.braking * dt);
     else if (drive > 0) v += V.acceleration * (1 - Math.max(0, v) / V.maxSpeed) * dt;
     else if (drive < 0) v -= V.acceleration * 0.7 * (1 - Math.max(0, -v) / V.maxReverse) * dt;
 
@@ -93,7 +114,7 @@ export class VehicleModel {
     const limit = V.steerAtRest + (V.steerAtSpeed - V.steerAtRest) * Math.min(1, Math.abs(v) / V.maxSpeed);
     this.steer = approach(this.steer, steerInput * limit, V.steerRate * dt);
 
-    this.heading += (v / V.wheelbase) * Math.tan(this.steer) * dt;
+    this.heading += (v / this.wheelbase) * Math.tan(this.steer) * dt;
     if (this.heading > Math.PI) this.heading -= Math.PI * 2;
     else if (this.heading < -Math.PI) this.heading += Math.PI * 2;
 
@@ -104,7 +125,7 @@ export class VehicleModel {
     // Buildings and walls: push each circle out and move the body with it.
     let hit = false;
     for (let side = -1; side <= 1; side += 2) {
-      const cx = x + sin * V.collisionOffset * side, cz = z + cos * V.collisionOffset * side;
+      const cx = x + sin * this.collisionOffset * side, cz = z + cos * this.collisionOffset * side;
       if (this.obstacles.pushOut(cx, cz, V.collisionRadius)) {
         x += this.obstacles.outX - cx;
         z += this.obstacles.outZ - cz;
@@ -125,7 +146,7 @@ export class VehicleModel {
   }
 }
 
-function approach(value: number, target: number, step: number): number {
+export function approach(value: number, target: number, step: number): number {
   if (value < target) return Math.min(target, value + step);
   return Math.max(target, value - step);
 }

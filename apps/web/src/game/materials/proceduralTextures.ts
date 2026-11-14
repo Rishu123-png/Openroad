@@ -236,6 +236,27 @@ export function residentialFacade(size = 512): PixelImage {
   });
 }
 
+/**
+ * A plain urban wall with one simple window per bay and nothing else: no
+ * balconies, curtains or shop fronts. Used for buildings whose use is unknown.
+ */
+export function genericFacade(size = 512): PixelImage {
+  return facade(size, 501, (u, v, random, x, y) => {
+    const stain = 0.92 + fbm(x / 45, y / 80, 503, 3) * 0.11;
+    const wall: Rgb = [236 * stain, 234 * stain, 228 * stain];
+    if (v > 0.95) return [wall[0] * 0.84, wall[1] * 0.84, wall[2] * 0.84]; // floor line
+    const left = 0.3, right = 0.7, top = 0.26, bottom = 0.68;
+    if (u > left && u < right && v > top && v < bottom) {
+      if (Math.min(u - left, right - u) < 0.025 || Math.min(v - top, bottom - v) < 0.03) return [150, 150, 146];
+      if (Math.abs(u - 0.5) < 0.012) return [150, 150, 146];
+      return glass((v - top) / (bottom - top), 0.7 + random(3) * 0.35, [62, 78, 92]);
+    }
+    if (v >= 0.68 && v < 0.715 && u > 0.27 && u < 0.73) return [196, 194, 188]; // sill
+    if (v > 0.2 && v <= 0.26 && u > 0.27 && u < 0.73) return [wall[0] * 0.9, wall[1] * 0.9, wall[2] * 0.9]; // shade over the window
+    return wall;
+  });
+}
+
 /** Curtain-wall office tower: glass panes in aluminium mullions with spandrel bands. */
 export function glassFacade(size = 512): PixelImage {
   return facade(size, 201, (u, v, random) => {
