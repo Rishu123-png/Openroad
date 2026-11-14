@@ -1,9 +1,17 @@
 import { pointInPolygons } from "./spawn";
 import type { DistrictBuilding } from "./types";
 
+interface Entry {
+  b: DistrictBuilding;
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
+}
+
 /** Finds the building under a point without testing every building. */
 export class BuildingIndex {
-  private readonly cells = new Map<number, DistrictBuilding[]>();
+  private readonly cells = new Map<number, Entry[]>();
 
   constructor(
     buildings: readonly DistrictBuilding[],
@@ -19,12 +27,13 @@ export class BuildingIndex {
           z1 = Math.max(z1, p[1]);
         }
       }
+      const entry: Entry = { b, x0, x1, z0, z1 };
       for (let cx = Math.floor(x0 / cellSize); cx <= Math.floor(x1 / cellSize); cx++) {
         for (let cz = Math.floor(z0 / cellSize); cz <= Math.floor(z1 / cellSize); cz++) {
           const key = (cx + 32768) * 65536 + (cz + 32768);
           const list = this.cells.get(key);
-          if (list) list.push(b);
-          else this.cells.set(key, [b]);
+          if (list) list.push(entry);
+          else this.cells.set(key, [entry]);
         }
       }
     }
@@ -33,7 +42,7 @@ export class BuildingIndex {
   at(x: number, z: number): DistrictBuilding | null {
     const list = this.cells.get((Math.floor(x / this.cellSize) + 32768) * 65536 + (Math.floor(z / this.cellSize) + 32768));
     if (!list) return null;
-    for (const b of list) if (pointInPolygons(x, z, b.polygons)) return b;
+    for (const e of list) if (x >= e.x0 && x <= e.x1 && z >= e.z0 && z <= e.z1 && pointInPolygons(x, z, e.b.polygons)) return e.b;
     return null;
   }
 }

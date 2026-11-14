@@ -32,6 +32,14 @@ on the real roads. The checks themselves (`tests/support/districtChecks.ts`,
 `districtFile.ts`) are tested in the ordinary suite on sound data and on data
 broken on purpose (`tests/districtChecks.test.ts`).
 
+The traffic part checks every vehicle on every frame for a minute: centre and
+whole body against every building footprint. On failure it prints, for each
+offending sample, the vehicle, time, position, heading, size, building id,
+category and bounds, distance to the wall, road id and segment, and the cause
+(A centre line in the building, B lane position, C turning path, D body only),
+with the number of different vehicles involved. It always prints the roads
+excluded from traffic and why.
+
 ## Browser smoke test
 
 `tools/smoke/browser-smoke.mjs` uses real key presses and the game's own

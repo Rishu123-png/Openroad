@@ -198,6 +198,20 @@ Marking positions are **not mapped**. They are drawn by rule and coloured as gen
 
 12 vehicles by default (6 on low, 18 on high, `?traffic=N` to override, hard limit 40). They follow mapped road centre lines on the left, obey `oneway`, slow at junctions and behind other vehicles, and never spawn in a building or within 45 m of the player.
 
+#### Traffic and buildings (`ROAD_SAFETY`, `traffic/roadSafety.ts`)
+
+Mapped roads and mapped buildings sometimes conflict: a gatehouse or canopy drawn across a road, a lane whose estimated width reaches into the houses beside it, a wall at the inside of a bend. The map is never changed to hide this. Traffic is kept out of the buildings instead:
+
+- Before driving, every road segment is checked every 0.5 m along its centre line and 1.18 m either side (half the widest traffic vehicle, 0.93 m, plus 0.25 m).
+  - Centre line inside a footprint: the segment is **excluded from traffic routing** (`centre-line-inside-building`).
+  - A building within 1.18 m of the centre line: excluded (`building-within-vehicle-width-of-centre-line`).
+  - Otherwise the lane position (normally a quarter of the road width left of the centre line) is tried at 100, 75, 50, 25 and 0 % until its own 1.18 m either side is clear. A reduced lane is recorded as narrowed.
+- Excluded segments are still drawn and still drivable by the player. Traffic turns off or turns round before them. A road with no usable segment carries no traffic.
+- While driving, a vehicle's whole body (its own length and width, at its heading) is tested before every move. If the eased path through a turn would overlap a building, the vehicle is held closer to its checked lane line, then on it.
+- Last resort: if no position is clear, the vehicle is removed where it stands and re-enters elsewhere. The turn it had just made is not offered again, or, if it was well along the segment, that segment is excluded (`vehicle-had-no-safe-position`).
+- Everything is recorded on `game.traffic.safety` (`excluded`, `narrowed`) and `game.traffic.removals`, with road id, segment, coordinates, reason and building id. `npm run test:real` prints it.
+
+
 ### Controls added
 
 G garage, Enter confirm, L headlights. C now cycles Chase, Bonnet, High and Overview. The chase camera moves in rather than pass through a building.
