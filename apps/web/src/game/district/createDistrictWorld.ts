@@ -166,7 +166,7 @@ export function createDistrictWorld(scene: Scene, district: DistrictData): Distr
     cell: 40,
     tint: (x, z) => {
       const k = 0.9 + 0.2 * (0.5 + 0.5 * Math.sin(x * 0.011 + Math.sin(z * 0.007) * 2) * Math.cos(z * 0.013));
-      return [1.02 * k, 0.94 * k, 0.8 * k]; // drier and duller than the mapped parks
+      return [1.34 * k, 1.02 * k, 1.12 * k]; // dry, dusty earth with thin cover: unmapped land is not shown as a lawn
     },
   });
   // Its own material: the same texture as grass, but without the depth offset the mapped green areas use to sit on top of it.

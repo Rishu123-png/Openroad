@@ -134,7 +134,7 @@ describe("garage and settings", () => {
     expect(game.selectedVehicle).toBe(COMPACT_SEDAN);
     expect(game.playerCar).not.toBe(first);
     expect(game.vehicle.wheelbase).toBe(COMPACT_SEDAN.wheelbase);
-    expect(states.at(-1)).toMatchObject({ open: true, index: 1, total: 2 });
+    expect(states.at(-1)).toMatchObject({ open: true, index: 1, total: PLAYER_CARS.length });
     expect(states.at(-1)!.vehicle.basis).toMatch(/Generic model.*Not a manufacturer asset/);
 
     // The car does not drive away while the garage is open.

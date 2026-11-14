@@ -4,7 +4,8 @@ import { createEngine } from "./game/engine/createEngine";
 import { DistrictGame, type Settings } from "./game/engine/DistrictGame";
 import { Game } from "./game/engine/Game";
 import type { GameBase, GameOptions } from "./game/engine/GameBase";
-import { PLAYER_CARS } from "./game/vehicle/models/carSpecs";
+import { PLAYER_CARS, PLAYER_PAINTS } from "./game/vehicle/models/carSpecs";
+import { carThumbnail, cssColor } from "./game/vehicle/models/carThumbnail";
 import { KeyboardInput } from "./input/KeyboardInput";
 import { parseTrafficCount } from "./game/traffic/trafficOption";
 import { Garage } from "./ui/Garage";
@@ -74,7 +75,12 @@ function boot(district: DistrictData | null): () => void {
           districtGame?.closeGarage();
           canvas.focus();
         },
+        select: (index) => districtGame?.selectVehicle(index),
+        paint: (index) => districtGame?.selectPaint(index),
         quality: (value) => districtGame?.setQuality(value),
+      }, {
+        vehicles: PLAYER_CARS.map((spec) => ({ id: spec.id, name: spec.name, category: spec.category, thumbnail: carThumbnail(spec) })),
+        paints: PLAYER_PAINTS.map((paint) => ({ name: paint.name, css: cssColor(paint.color) })),
       });
       disposers.push(() => garage.dispose());
       districtGame = new DistrictGame({
@@ -86,9 +92,10 @@ function boot(district: DistrictData | null): () => void {
         onGarage: (state) => {
           if (!state.open) return garage.hide();
           const v = state.vehicle;
-          garage.show({ name: v.name, klass: v.klass, size: [v.length, v.width, v.height], note: v.basis, index: state.index, total: state.total, quality: state.quality });
+          garage.show({ name: v.name, klass: v.klass, size: [v.length, v.width, v.height], note: v.basis, index: state.index, total: state.total, quality: state.quality, paint: state.paint });
         },
       });
+      districtGame.camera.orbitOffset = 1.5; // the garage panel covers the left of the view
       game = districtGame;
     } else game = new Game(options);
     disposers.push(() => game.dispose());

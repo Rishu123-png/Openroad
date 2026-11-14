@@ -51,6 +51,10 @@ export class VehicleModel {
   /** Set from the chosen vehicle. */
   wheelbase: number = VEHICLE.wheelbase;
   collisionOffset: number = VEHICLE.collisionOffset;
+  /** Radius of each collision circle; set from the chosen vehicle's width. */
+  collisionRadius: number = VEHICLE.collisionRadius;
+  /** For reporting: the size the collision circles stand in for. */
+  collisionHeight = 1.6;
 
   constructor(
     private readonly bounds: DistrictBounds,
@@ -126,7 +130,7 @@ export class VehicleModel {
     let hit = false;
     for (let side = -1; side <= 1; side += 2) {
       const cx = x + sin * this.collisionOffset * side, cz = z + cos * this.collisionOffset * side;
-      if (this.obstacles.pushOut(cx, cz, V.collisionRadius)) {
+      if (this.obstacles.pushOut(cx, cz, this.collisionRadius)) {
         x += this.obstacles.outX - cx;
         z += this.obstacles.outZ - cz;
         hit = true;

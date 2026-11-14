@@ -134,3 +134,22 @@ counts: provenance totals, gates, labels, meshes, materials and world build time
 skipped where the file is absent.
 
 `npm run audit:district` prints what the district file contains (read only).
+
+## Visual quality upgrade V1: vehicles
+
+`apps/web/tests/garageVehicles.test.ts` (13 tests) covers the six-vehicle garage:
+
+- six vehicles with distinct names, categories and side outlines, and no maker or model name in anything the player is shown;
+- every model builds complete (glass all round, lamps at both ends, mirrors, wheels inside the arches) and refers to no model file;
+- keyboard cycling reaches all six in both directions, and the mesh in the world is the model the garage names;
+- colour selection with W / S only while the garage is open, kept across vehicles and reloads;
+- per-vehicle collision length, width, height and wheelbase, taken from the stated size and not from the mesh;
+- every vehicle stops with its nose, tail and side at a wall, stays out of buildings and inside the district when driven hard;
+- traffic uses the six models within the clearances the existing safety tests were written for;
+- wheel rotation, front-only steering and the sprung body (dive, squat, roll) with the wheels left on the road.
+
+Three older tests were changed because they stated that the garage has two vehicles; their other assertions are unchanged:
+`experience.test.ts` (garage total), `garage.test.ts` (order of vehicles when cycling; `hatchback` is now a drivable model, so it left the list of unusable saved names and `minibus` and a near-miss spelling joined it).
+No safety assertion was changed.
+
+These tests run on generated geometry and the small test district. They say nothing about how the vehicles look; that needs a person and a GPU.

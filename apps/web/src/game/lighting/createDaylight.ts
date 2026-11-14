@@ -37,7 +37,8 @@ export const DAYLIGHT = {
   shadowMapSize: 4096,
 } as const;
 
-const SKY_CUBE_SIZE = 32;
+/** Faces of the sky reflected in paint and glass. 64 keeps the horizon line readable in a car door. */
+const SKY_CUBE_SIZE = 64;
 
 function linear(c: readonly [number, number, number]): Color3 {
   return new Color3(Math.pow(c[0] / 255, 2.2), Math.pow(c[1] / 255, 2.2), Math.pow(c[2] / 255, 2.2));

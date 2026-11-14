@@ -102,7 +102,9 @@ describe("garage", () => {
       expect(spawnedModel(game)).toMatchObject({ id: game.selectedVehicle.id, players: 1 });
       expect(states.at(-1)!.vehicle).toBe(game.selectedVehicle);
     }
-    expect(order).toEqual(["compact-sedan", "compact-suv", "compact-sedan", "compact-suv", "compact-sedan", "compact-suv"]);
+    // Six vehicles: right, right, left, left, right, left from the first.
+    expect(order).toEqual([1, 2, 1, 0, 1, 0].map((i) => PLAYER_CARS[i]!.id));
+    expect(PLAYER_CARS.slice(0, 2).map((c) => c.id)).toEqual(["compact-suv", "compact-sedan"]);
     // By index too, including out-of-range and negative ones.
     game.selectVehicle(PLAYER_CARS.length + 1);
     expect(game.selectedVehicle).toBe(PLAYER_CARS[1]);
@@ -163,8 +165,8 @@ describe("garage", () => {
   });
 
   it("falls back to the default when the saved choice is unusable", () => {
-    // "hatchback" is a real model, but a traffic one: it must not become drivable through a saved value.
-    for (const saved of ["", "tank", "COMPACT-SEDAN", "hatchback", "__proto__"]) {
+    // Names that are not in the garage, including near-misses of real ones, must not become drivable through a saved value.
+    for (const saved of ["", "tank", "COMPACT-SEDAN", "hatchback ", "minibus", "__proto__"]) {
       const states: GarageState[] = [];
       const game = start({ settings: memory({ [SETTING_KEYS.vehicle]: saved, [SETTING_KEYS.quality]: saved }) }, states);
       expect(game.selectedVehicle, `saved "${saved}"`).toBe(COMPACT_SUV);

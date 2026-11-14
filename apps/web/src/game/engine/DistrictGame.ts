@@ -10,7 +10,7 @@ import { createDaylight, DAYLIGHT, type Daylight } from "../lighting/createDayli
 import { TRAFFIC, TrafficModel } from "../traffic/TrafficModel";
 import { TrafficView } from "../traffic/TrafficView";
 import type { CarVisual } from "../vehicle/models/CarVisual";
-import { PLAYER_CARS, type CarSpec } from "../vehicle/models/carSpecs";
+import { collisionBody, PLAYER_CARS, PLAYER_PAINTS, type CarSpec } from "../vehicle/models/carSpecs";
 import { VehicleModel, type VehicleInput } from "../vehicle/VehicleModel";
 import { GameBase, type GameOptions, type GameStats } from "./GameBase";
 
@@ -32,7 +32,7 @@ export interface Settings {
   setItem(key: string, value: string): void;
 }
 
-export const SETTING_KEYS = { vehicle: "openroad.vehicle", quality: "openroad.quality" } as const;
+export const SETTING_KEYS = { vehicle: "openroad.vehicle", quality: "openroad.quality", paint: "openroad.paint" } as const;
 
 export interface DistrictGameOptions extends GameOptions {
   district: DistrictData;
@@ -62,6 +62,8 @@ export interface GarageState {
   index: number;
   total: number;
   quality: GraphicsQuality;
+  /** Position of the chosen colour in PLAYER_PAINTS. */
+  paint: number;
 }
 
 /** Height of the road surface the vehicle rides on. */
@@ -86,6 +88,9 @@ export class DistrictGame extends GameBase {
   declare private trafficView: TrafficView;
   declare private vehicleIndex: number;
   declare private garageOpen: boolean;
+  /** Position in PLAYER_PAINTS, or -1 while the player has not chosen and each vehicle wears its own colour. */
+  declare private paintChoice: number;
+  declare private lastSpeed: number;
   declare private graphics: GraphicsQuality;
   declare private headlights: SpotLight[];
   declare private headlightsOn: boolean;
@@ -133,6 +138,10 @@ export class DistrictGame extends GameBase {
     const saved = this.readSetting(SETTING_KEYS.vehicle);
     const savedIndex = PLAYER_CARS.findIndex((c) => c.id === saved);
     this.vehicleIndex = Math.max(0, savedIndex);
+    const savedPaint = this.readSetting(SETTING_KEYS.paint);
+    const paintIndex = savedPaint === null ? -1 : PLAYER_PAINTS.findIndex((p) => p.name === savedPaint);
+    this.paintChoice = paintIndex;
+    this.lastSpeed = 0;
     this.spawnPlayerCar();
     this.respawn();
 
@@ -156,6 +165,8 @@ export class DistrictGame extends GameBase {
       input.onPressed(InputAction.Confirm, () => this.closeGarage()),
       input.onPressed(InputAction.SteerLeft, () => this.garageOpen && this.selectVehicle(this.vehicleIndex - 1)),
       input.onPressed(InputAction.SteerRight, () => this.garageOpen && this.selectVehicle(this.vehicleIndex + 1)),
+      input.onPressed(InputAction.Accelerate, () => this.garageOpen && this.selectPaint(this.selectedPaint + 1)),
+      input.onPressed(InputAction.Brake, () => this.garageOpen && this.selectPaint(this.selectedPaint - 1)),
       input.onPressed(InputAction.Headlights, () => this.setHeadlights(!this.headlightsOn)),
     );
   }
@@ -201,9 +212,13 @@ export class DistrictGame extends GameBase {
     for (const light of this.headlights) light.dispose();
     this.headlights = [];
     this.playerCar?.dispose();
-    this.playerCar = this.world.cars.create(spec, "player", spec.paint, true);
-    this.vehicle.wheelbase = spec.wheelbase;
-    this.vehicle.collisionOffset = spec.length / 2 - 0.95;
+    this.playerCar = this.world.cars.create(spec, "player", PLAYER_PAINTS[this.selectedPaint]!.color, true, true);
+    // The collision shape comes from the vehicle's stated size, not from its drawn mesh.
+    const body = collisionBody(spec);
+    this.vehicle.wheelbase = body.wheelbase;
+    this.vehicle.collisionRadius = body.radius;
+    this.vehicle.collisionOffset = body.offset;
+    this.vehicle.collisionHeight = body.height;
     this.camera.setVehicleSize(spec.length, spec.height);
     if (lightsWereOn) this.setHeadlights(true);
   }
@@ -218,6 +233,23 @@ export class DistrictGame extends GameBase {
       this.update(0);
     }
     this.writeSetting(SETTING_KEYS.vehicle, this.selectedVehicle.id);
+    this.notifyGarage();
+  }
+
+  /** Position in PLAYER_PAINTS of the colour the player's vehicle wears. */
+  get selectedPaint(): number {
+    if (this.paintChoice >= 0) return this.paintChoice;
+    const own = PLAYER_PAINTS.findIndex((p) => p.color === this.selectedVehicle.paint);
+    return Math.max(0, own);
+  }
+
+  /** Chooses a colour by position in the list (wraps round) and remembers it. */
+  selectPaint(index: number): void {
+    const n = PLAYER_PAINTS.length;
+    this.paintChoice = ((Math.trunc(index) % n) + n) % n;
+    this.writeSetting(SETTING_KEYS.paint, PLAYER_PAINTS[this.paintChoice]!.name);
+    this.spawnPlayerCar();
+    this.update(0);
     this.notifyGarage();
   }
 
@@ -241,7 +273,7 @@ export class DistrictGame extends GameBase {
   }
 
   private notifyGarage(): void {
-    this.opts.onGarage?.({ open: this.garageOpen, vehicle: this.selectedVehicle, index: this.vehicleIndex, total: PLAYER_CARS.length, quality: this.graphics });
+    this.opts.onGarage?.({ open: this.garageOpen, vehicle: this.selectedVehicle, index: this.vehicleIndex, total: PLAYER_CARS.length, quality: this.graphics, paint: this.selectedPaint });
   }
 
   setQuality(quality: GraphicsQuality): void {
@@ -319,6 +351,11 @@ export class DistrictGame extends GameBase {
     // Distance along the heading, so the wheels turn backwards in reverse.
     const travelled = (v.x - px) * Math.sin(v.heading) + (v.z - pz) * Math.cos(v.heading);
     this.playerCar.place(v.x, RIDE_HEIGHT, v.z, v.heading, travelled, v.steer);
+    if (deltaSeconds > 0) {
+      const forward = Math.max(-20, Math.min(20, (v.speed - this.lastSpeed) / deltaSeconds));
+      this.playerCar.setBodyMotion(forward, (v.speed * v.speed * Math.tan(v.steer)) / v.wheelbase, deltaSeconds);
+    }
+    this.lastSpeed = v.speed;
     // Lit by the handbrake and while the brake pedal slows forward motion; not when S is reversing the car.
     this.playerCar.setBraking(driving && (c.handbrake || v.braking || (c.brake && v.speed > 0.3)));
     this.camera.update(v.x, v.z, v.heading, deltaSeconds, v.speed);

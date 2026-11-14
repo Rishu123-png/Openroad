@@ -54,7 +54,7 @@ export class CarFactory {
     this.glass.albedoColor = new Color3(0.02, 0.03, 0.035);
     this.glass.metallic = 0;
     this.glass.roughness = 0.04;
-    this.glass.alpha = 0.62;
+    this.glass.alpha = 0.84;
     this.glass.environmentIntensity = 1.4;
 
     this.detail = new PBRMaterial("carDetail", scene);
@@ -108,8 +108,8 @@ export class CarFactory {
     if (!material) {
       material = new PBRMaterial(`carPaint:${key}`, this.scene);
       material.albedoColor = new Color3(color[0], color[1], color[2]);
-      material.metallic = 0.45;
-      material.roughness = 0.36;
+      material.metallic = 0.55;
+      material.roughness = 0.3;
       material.clearCoat.isEnabled = true;
       material.clearCoat.intensity = 0.9;
       material.clearCoat.roughness = 0.08;
@@ -143,15 +143,20 @@ export class CarFactory {
 
   /**
    * @param ownTailLamps give this car its own tail-lamp material, so its brake lights can light up alone
+   * @param sprung hang the body from its own node, so it can lean on its springs (the player's car)
    */
-  create(spec: CarSpec, name: string, color: readonly [number, number, number], ownTailLamps = false): CarVisual {
+  create(spec: CarSpec, name: string, color: readonly [number, number, number], ownTailLamps = false, sprung = false): CarVisual {
     const t = this.templatesFor(spec);
     const root = new TransformNode(name, this.scene);
-    const child = <M extends AbstractMesh>(mesh: M): M => {
-      mesh.parent = root;
+    // The body is sprung: it leans on its own node while the wheels stay on the road.
+    const bodyNode = sprung ? new TransformNode(`${name}:sprung`, this.scene) : root;
+    if (bodyNode !== root) bodyNode.parent = root;
+    const on = <M extends AbstractMesh>(parent: TransformNode, mesh: M): M => {
+      mesh.parent = parent;
       mesh.isPickable = false;
       return mesh;
     };
+    const child = <M extends AbstractMesh>(mesh: M): M => on(bodyNode, mesh);
     // Paint is a clone, which shares the geometry but can carry its own colour.
     const body = child(t.paint.clone(`${name}:paint`));
     body.material = this.paint(color);
@@ -167,15 +172,15 @@ export class CarFactory {
       brake.isVisible = true;
     } else child(t.brake.createInstance(`${name}:brake`));
     const wheels = t.geometry.wheelCentres.map((centre, i) => {
-      const wheel = child(t.wheel.createInstance(`${name}:wheel${i}`));
+      const wheel = on(root, t.wheel.createInstance(`${name}:wheel${i}`));
       wheel.position.set(centre[0], centre[1], centre[2]);
       if (centre[0] < 0) wheel.rotation.y = Math.PI; // the left wheels are the same wheel turned round
       return wheel;
     });
-    const shadow = child(this.shadowTemplate.createInstance(`${name}:shadow`));
+    const shadow = on(root, this.shadowTemplate.createInstance(`${name}:shadow`));
     shadow.scaling.set(spec.width * 1.25, 1, spec.length * 1.15);
     shadow.position.y = 0.012;
-    return new CarVisual(spec, root, wheels, tail, t.geometry.headlamps, body, ownTailLamps);
+    return new CarVisual(spec, root, wheels, tail, t.geometry.headlamps, body, ownTailLamps, bodyNode);
   }
 
   /** Vertex and triangle counts of a model, for the performance notes. */
@@ -187,6 +192,9 @@ export class CarFactory {
     return { triangles: indices / 3 };
   }
 }
+
+/** How far the body leans. Taller vehicles lean more. */
+export const SUSPENSION = { pitchPerAccel: 0.0026, rollPerAccel: 0.0048, maxPitch: 0.045, maxRoll: 0.06, rate: 7 } as const;
 
 const TAIL_DIM = new Color3(0.28, 0.012, 0.012);
 const TAIL_BRIGHT = new Color3(1, 0.06, 0.04);
@@ -204,7 +212,34 @@ export class CarVisual {
     readonly headlamps: readonly V3[],
     readonly body: Mesh,
     private readonly ownsTailLamps = false,
+    /** The node the body hangs from: the root itself for a car that is not sprung. */
+    readonly sprung: TransformNode = root,
   ) {}
+
+  /**
+   * Leans the body on its springs: the nose dips under braking and lifts
+   * under power, and the body rolls away from the inside of a turn. The
+   * wheels do not move. This is a visual response; it does not change how
+   * the vehicle drives or what it collides with.
+   *
+   * @param forward acceleration along the vehicle, m/s² (negative when slowing)
+   * @param rightward acceleration toward the vehicle's right, m/s² (positive in a right turn)
+   */
+  setBodyMotion(forward: number, rightward: number, deltaSeconds: number): void {
+    const S = SUSPENSION;
+    const tall = this.spec.height / 1.6;
+    const pitch = Math.max(-S.maxPitch, Math.min(S.maxPitch, -forward * S.pitchPerAccel * tall));
+    const roll = Math.max(-S.maxRoll, Math.min(S.maxRoll, rightward * S.rollPerAccel * tall));
+    if (this.sprung === this.root) return; // not sprung: leaning would tilt the wheels into the road
+    const k = deltaSeconds <= 0 ? 0 : 1 - Math.exp(-S.rate * deltaSeconds);
+    this.sprung.rotation.x += (pitch - this.sprung.rotation.x) * k;
+    this.sprung.rotation.z += (roll - this.sprung.rotation.z) * k;
+  }
+
+  /** Body lean in radians: positive pitch is nose down, positive roll is right side up. */
+  get bodyLean(): { pitch: number; roll: number } {
+    return { pitch: this.sprung.rotation.x, roll: this.sprung.rotation.z };
+  }
 
   /**
    * @param heading radians clockwise from north

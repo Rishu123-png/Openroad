@@ -26,6 +26,8 @@ export const CHASE_VIEWS: readonly ChaseView[] = [
 ];
 
 /** Higher turns the camera behind the vehicle sooner. */
+/** Vertical field of view in radians: about 52 degrees, close to a normal lens, so cars and buildings keep their proportions. */
+export const CAMERA_FOV = 0.9;
 const FOLLOW_RATE = 3.2;
 const EASE_OUT_RATE = 1.6;
 const MIN_DISTANCE = 1.6;
@@ -45,13 +47,15 @@ export class ChaseCamera {
   private distance = CHASE_VIEWS[0]!.back;
   private orbiting = false;
   private orbitAngle = 0;
+  /** Metres the garage view looks to the left of the vehicle; the vehicle then appears right of centre. */
+  orbitOffset = 0;
   private vehicleLength = 4.2;
   private vehicleHeight = 1.5;
   private readonly target = new Vector3();
 
   constructor(scene: Scene) {
     this.camera = new TargetCamera("chaseCamera", new Vector3(0, 3, -8), scene);
-    this.camera.fov = 1.01;
+    this.camera.fov = CAMERA_FOV;
     this.camera.minZ = 0.25;
     this.camera.maxZ = 4000;
     scene.activeCamera = this.camera;
@@ -97,11 +101,14 @@ export class ChaseCamera {
     if (this.orbiting) {
       this.orbitAngle += deltaSeconds * 0.35;
       const a = heading + this.orbitAngle;
-      let r = 6.4;
+      // Close enough to fill the view with the vehicle, at about eye height.
+      let r = Math.max(5.4, this.vehicleLength * 1.32);
       // Keep the showroom view out of walls too.
       while (r > 3 && this.blocked(x + Math.sin(a) * r, z + Math.cos(a) * r)) r -= 0.5;
-      this.camera.position.set(x + Math.sin(a) * r, 1.75, z + Math.cos(a) * r);
-      this.target.set(x, 0.75, z);
+      this.camera.position.set(x + Math.sin(a) * r, 1.5, z + Math.cos(a) * r);
+      // Look a little to one side of the vehicle, so it stands clear of the garage panel on the left.
+      const aside = this.orbitOffset;
+      this.target.set(x + Math.cos(a) * aside, 0.7, z - Math.sin(a) * aside);
       this.camera.setTarget(this.target);
       return;
     }

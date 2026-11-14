@@ -78,7 +78,7 @@ export function asphaltTextures(size = 512): SurfaceTextures {
   return { albedo, normal };
 }
 
-/** Interlocking concrete pavers in red and grey, as on Indian footpaths. One tile covers 2 m. */
+/** Interlocking concrete pavers, mostly weathered grey with some dull red blocks, as on Indian footpaths. One tile covers 2 m. */
 export function paverTextures(size = 512): SurfaceTextures {
   const bw = size / 10; // 20 cm
   const bh = size / 20; // 10 cm
@@ -99,7 +99,7 @@ export function paverTextures(size = 512): SurfaceTextures {
     const tone = 0.92 + hash2(b.id, 3, 9) * 0.16;
     const dirt = 0.82 + fbm((x / size) * 5, (y / size) * 5, 41, 3, 5) * 0.3;
     const speck = 0.94 + hash2(x, y, 5) * 0.12;
-    const base: Rgb = r < 0.8 ? [160, 108, 94] : [150, 118, 106];
+    const base: Rgb = r < 0.72 ? [152, 147, 138] : r < 0.9 ? [150, 122, 110] : [132, 128, 122];
     const k = tone * dirt * speck * (0.45 + 0.55 * joint(b));
     return [base[0] * k, base[1] * k, base[2] * k];
   });
